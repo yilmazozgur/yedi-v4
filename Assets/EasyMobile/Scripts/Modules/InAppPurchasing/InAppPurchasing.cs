@@ -1357,8 +1357,13 @@ namespace EasyMobile
 
             public void OnInitializeFailed(InitializationFailureReason error)
             {
+                OnInitializeFailed(error, null);
+            }
+
+            public void OnInitializeFailed(InitializationFailureReason error, string message)
+            {
                 // Purchasing set-up has not succeeded. Check error for reason. Consider sharing this reason with the user.
-                Debug.Log("In-App Purchasing OnInitializeFailed. InitializationFailureReason:" + error);
+                Debug.Log("In-App Purchasing OnInitializeFailed. InitializationFailureReason:" + error + (message != null ? " Message: " + message : ""));
 
                 // Done initializing.
                 sIsInitializing = false;

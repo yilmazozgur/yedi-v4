@@ -142,7 +142,7 @@ namespace EasyMobile.Demo
                 return;
 
             // Auto move forward.
-            rb.velocity = new Vector3(rb.velocity.x, Speed);
+            rb.linearVelocity = new Vector3(rb.linearVelocity.x, Speed);
             RunDistance += Speed;
         }
 
@@ -181,7 +181,7 @@ namespace EasyMobile.Demo
 
             if (slowdownFrames <= 0)
             {
-                rb.velocity = Vector3.zero;
+                rb.linearVelocity = Vector3.zero;
                 IsMoving = false;
             }
             else
@@ -293,7 +293,7 @@ namespace EasyMobile.Demo
             }
             Speed = 0;
             IsMoving = false;
-            rb.velocity = Vector3.zero;
+            rb.linearVelocity = Vector3.zero;
         }
 
         private void OnTriggerEnter(Collider other)

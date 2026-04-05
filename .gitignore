@@ -51,3 +51,4 @@ Thumbs.db
 
 # Keystore (contains signing keys - sensitive!)
 /Keystore/
+.vscode/

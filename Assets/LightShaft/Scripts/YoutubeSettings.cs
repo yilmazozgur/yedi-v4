@@ -1493,7 +1493,7 @@ namespace LightShaft.Scripts
         //It's not in use, maybe can be usefull to you, it's just a test.
         public int GetMaxQualitySupportedByDevice()
         {
-            if (Screen.orientation == ScreenOrientation.Landscape)
+            if (Screen.orientation == ScreenOrientation.LandscapeLeft)
             {
                 //use the height
                 return Screen.currentResolution.height;
