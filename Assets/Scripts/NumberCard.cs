@@ -4,12 +4,11 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
-public class NumberCard : MonoBehaviour
+public class NumberCard : CardTypeBase
 {
     [SerializeField] public float numberSelected;
     [SerializeField] float maxValueAdd = 3f;
     [SerializeField] float maxValueMultiply = 4f;
-    [SerializeField] bool activated = false;
     float[] gcdList = { 2f, 3f, 4f, 5f, 7f, 8f, 9f, 10f, 14f, 15f, 18f, 21f};
     string[] vectorList = { "(0,0)", "(0,1)", "(1,0)", "(1,1)", "(0,-1)", "(-1,0)", "(-1,-1)", "(1,-1)", "(-1,1)"};
     string[] intervalList = {"nihil","(-\u221E,-1)", "(-\u221E,1)", "(-\u221E,0)", "(-1, \u221E)", "(0, \u221E)", "(1, \u221E)",
@@ -17,36 +16,18 @@ public class NumberCard : MonoBehaviour
     string[] trigonList = {"0", "sin(x)", "cos(x)", "sin(-x)", "cos(-x)", "sin(π-x)", "cos(π-x)", "sin(x)\n+cos(x)", "sin(x)\n-cos(x)", "cos(x)\n-sin(x)", "-sin(x)\n-cos(x)" }; //1D6D1
     float[] sortList = {1f, 2f, 3f, 4f, 5f};
 
-
     TextMeshProUGUI costText;
-    //Text costText;
     string numberValueInitial;
     string numberSelectedString;
-    CardFrame cardFrameAttached;
-    Card cardAttached;
-    ManaDisplay manaDisplay;
-    float manaReductionMultiplier;
-    float manaIncreaseMultiplier1;
-    float manaIncreaseMultiplier2;
-    float manaIncreaseMultiplier3;
-    bool cardSuper;
     string modeNumber = "add";
     float numberSelectedNumerator;
     float numberSelectedDenominator;
     Fraction numberSelectedFraction;
 
-    private void Start()
+    protected override void Start()
     {
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
-        manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
-        manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
-        manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;
-        manaIncreaseMultiplier3 = manaDisplay.manaIncreaseMultiplier3;
-        activated = false;
-        cardFrameAttached = GetComponentInParent<CardFrame>();
-        cardSuper = cardFrameAttached.cardSuper;
+        base.Start();
         costText = GetComponentInChildren<TextMeshProUGUI>();
-        cardAttached = cardFrameAttached.cardObject;
         numberValueInitial = SetNumber();
     }
 

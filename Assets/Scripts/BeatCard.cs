@@ -2,32 +2,22 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class BeatCard : MonoBehaviour
+public class BeatCard : CardTypeBase
 {
-    [SerializeField] bool activated = false;
-
     BeatGenerator beatGenerator;
     SpriteRenderer noteRenderer;
     SpriteRenderer boxRenderer;
-    CardFrame cardFrameAttached;
-    Card cardAttached;
-    ManaDisplay manaDisplay;
-    float manaReductionMultiplier;
-    float manaIncreaseMultiplier1;
-    float manaIncreaseMultiplier2;
-    float manaIncreaseMultiplier3;
     string modeBeat = "double";
     float timeBeat;
 
-
-    void Start()
+    protected override void Start()
     {
         SpriteRenderer[] spriteRenderers = GetComponentsInChildren<SpriteRenderer>();
         foreach(SpriteRenderer spriteIter in spriteRenderers)
         {
             if(spriteIter.gameObject.name == "Beat Box")
             {
-                boxRenderer = spriteIter; 
+                boxRenderer = spriteIter;
                 boxRenderer.gameObject.SetActive(false);
             }
             else if(spriteIter.gameObject.name == "Note Drawing")
@@ -36,15 +26,9 @@ public class BeatCard : MonoBehaviour
                 noteRenderer.gameObject.SetActive(false);
             }
         }
-        
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
-        beatGenerator = FindAnyObjectByType<BeatGenerator>();
-        manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
-        manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
-        manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;
-        manaIncreaseMultiplier3 = manaDisplay.manaIncreaseMultiplier3;
-        activated = false;
-        cardFrameAttached = GetComponentInParent<CardFrame>();
+
+        base.Start();
+        beatGenerator = BeatGenerator.Instance;
         SetBeat();
     }
 

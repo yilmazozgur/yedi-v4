@@ -4,13 +4,12 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
-public class ColorCard : MonoBehaviour
+public class ColorCard : CardTypeBase
 {
     [SerializeField] public Color colorSelected;
     [SerializeField] public TextMeshProUGUI colorText;
     [SerializeField] public Sprite spriteUniform;
     [SerializeField] public Sprite spriteEdge;
-    [SerializeField] bool activated = false;
     Color[] colorList = new Color[6] { Color.red , Color.green, Color.blue,
         Color.cyan, Color.magenta, Color.yellow} ;
     string[] textList = new string[6] { "green", "blue", "red", "magenta", "yellow", "cyan"};
@@ -20,20 +19,10 @@ public class ColorCard : MonoBehaviour
         new Color(0.4f, 0.4f, 0.4f), new Color(0.5f, 0.5f, 0.5f),
         new Color(0.6f, 0.6f, 0.6f), new Color(0.7f, 0.7f, 0.7f),
         new Color(0.8f, 0.8f, 0.8f), new Color(0.9f, 0.9f, 0.9f) };
-    
+
     SpriteRenderer colorRenderer;
     SpriteRenderer colorRendererEdge;
-    //Text colorText;
-    //ColorText colorTextObject;
     Color colorInitial;
-    CardFrame cardFrameAttached;
-    Card cardAttached;
-    ManaDisplay manaDisplay;
-    float manaReductionMultiplier;
-    float manaIncreaseMultiplier1;
-    float manaIncreaseMultiplier2;
-    float manaIncreaseMultiplier3;
-    bool cardSuper;
     string modeColor = "add";
     Color colorEmpty = Color.clear;
     Color colorEssential1;
@@ -47,16 +36,9 @@ public class ColorCard : MonoBehaviour
     string textEmpty;
     string textSelected;
 
-    void Start()
+    protected override void Start()
     {
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
-        manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
-        manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
-        manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;
-        manaIncreaseMultiplier3 = manaDisplay.manaIncreaseMultiplier3;
-        activated = false;
-        cardFrameAttached = GetComponentInParent<CardFrame>();
-        cardSuper = cardFrameAttached.cardSuper;
+        base.Start();
         SetColorsForMode();
         colorInitial = SetColor();
     }

@@ -110,9 +110,9 @@ public class CardFrame : MonoBehaviour
         //cardType = PlayerPrefs.GetFloat("CardType");
         backgroundSpriteRenderer = GetComponentInChildren<CardFrameBackground>().GetComponent<SpriteRenderer>();
         //audioCardPlaceOnSlot = GetComponentInChildren<AudioSource>();
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
+        manaDisplay = ManaDisplay.Instance;
         maxNumberOfMerges = manaDisplay.maxNumberOfMerges;
-        cardDrawer = FindAnyObjectByType<CardDrawer>();
+        cardDrawer = CardDrawer.Instance;
         cardSuper = cardDrawer.GetSuperCard();
         numberCard = GetNumberCard();
         colorCard = GetColorCard();
@@ -150,8 +150,8 @@ public class CardFrame : MonoBehaviour
         motorGainSpriteRenderer = motorGainSprite.GetComponent<SpriteRenderer>();
         motorGainSpriteRenderer.enabled = false;
 
-        statsCollectorExpanded = FindAnyObjectByType<StatsCollectorExpanded>();
-        tutorialController = FindAnyObjectByType<TutorialController>();
+        statsCollectorExpanded = StatsCollectorExpanded.Instance;
+        tutorialController = TutorialController.Instance;
     }
 
 

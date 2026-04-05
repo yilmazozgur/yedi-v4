@@ -34,8 +34,8 @@ public class BuyCardButton : MonoBehaviour
         matCard = GetComponent<SpriteRenderer>().material;
         particleVFX = GetComponentInChildren<ParticleSystem>();
         audioCardDraw = GetComponentInChildren<AudioSource>();
-        cardDrawer = FindAnyObjectByType<CardDrawer>();
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
+        cardDrawer = CardDrawer.Instance;
+        manaDisplay = ManaDisplay.Instance;
         currentCardType = cardDrawer.GetCardType();
         costText = GetComponentInChildren<Text>();
 

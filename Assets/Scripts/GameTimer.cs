@@ -6,6 +6,13 @@ using BayatGames.SaveGameFree;
 
 public class GameTimer : MonoBehaviour {
 
+    public static GameTimer Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     public float levelTime = 40;
     public bool triggeredLevelFinished = false;
     Slider timeSlider;
@@ -19,7 +26,7 @@ public class GameTimer : MonoBehaviour {
     {
         SetTime();
         timeSlider = GetComponent<Slider>();
-        levelController = FindAnyObjectByType<LevelController>();
+        levelController = LevelController.Instance;
         timePreviousFrame = Time.timeSinceLevelLoad;
     }
 

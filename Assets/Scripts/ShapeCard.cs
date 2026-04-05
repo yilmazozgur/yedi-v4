@@ -2,7 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class ShapeCard : MonoBehaviour
+public class ShapeCard : CardTypeBase
 {
     [SerializeField] public Sprite spriteSelected;
     [SerializeField] Sprite[] spriteListTriangle;
@@ -11,33 +11,16 @@ public class ShapeCard : MonoBehaviour
     [SerializeField] Sprite[] spriteListKanizsa;
     [SerializeField] Sprite[] spriteListSphere;
     [SerializeField] Sprite[] spriteListHanoi;
-    [SerializeField] bool activated = false;
     Sprite[] spriteListSelected;
 
     public int spriteSelectedIndex;
     SpriteRenderer spriteRendererShape;
     Sprite spriteInitial;
-    CardFrame cardFrameAttached;
-    Card cardAttached;
-    ManaDisplay manaDisplay;
-    float manaReductionMultiplier;
-    float manaIncreaseMultiplier1;
-    float manaIncreaseMultiplier2;
-    float manaIncreaseMultiplier3;
-    bool cardSuper;
     string modeShape = "triangle";
 
-    void Start()
+    protected override void Start()
     {
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
-        manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
-        manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
-        manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;
-        manaIncreaseMultiplier3 = manaDisplay.manaIncreaseMultiplier3;
-        activated = false;
-        cardFrameAttached = GetComponentInParent<CardFrame>();
-        cardSuper = cardFrameAttached.cardSuper;
-        cardAttached = cardFrameAttached.cardObject;
+        base.Start();
         SetShapesForMode();
         spriteInitial = SetShape();
     }

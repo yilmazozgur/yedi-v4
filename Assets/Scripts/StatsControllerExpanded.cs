@@ -8,6 +8,13 @@ using LightShaft.Scripts;
 
 public class StatsControllerExpanded : MonoBehaviour
 {
+    public static StatsControllerExpanded Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     float avgGeneric = 1.3f;
     float avgPersonTotal = 8f;
     float avgPersonNumber;
@@ -188,7 +195,7 @@ public class StatsControllerExpanded : MonoBehaviour
 
     public void PlayVideo(string videoURL)
     {
-        musicPlayer = FindAnyObjectByType<MusicPlayer>();
+        musicPlayer = MusicPlayer.Instance;
         if (musicPlayer != null)
         {
             musicPlayer.SetVolume(0f);
@@ -213,7 +220,7 @@ public class StatsControllerExpanded : MonoBehaviour
             videoObject.gameObject.SetActive(false);
         }
  
-        musicPlayer = FindAnyObjectByType<MusicPlayer>();
+        musicPlayer = MusicPlayer.Instance;
         if (musicPlayer != null)
         {
             musicPlayer.SetVolume(PlayerPrefsController.GetMasterVolume());

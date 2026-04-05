@@ -4,11 +4,16 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using BayatGames.SaveGameFree;
 using EasyMobile;
-//using VoxelBusters.EssentialKit;
-//using Firebase;
-//using Firebase.Database;
+
 
 public class LevelLoader : MonoBehaviour {
+
+    public static LevelLoader Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
 
     int timeToWait = 3;
     public int currentSceneIndex;
@@ -22,8 +27,6 @@ public class LevelLoader : MonoBehaviour {
     public int maxFreeGamesForStats = 20;
     UnlockButton unlockButton;
     UnlockController unlockController;
-    //DatabaseReference reference;
-    
 
     private void OnApplicationPause(bool pause)
     {
@@ -37,7 +40,7 @@ public class LevelLoader : MonoBehaviour {
             //Load last scene
             purchaseGame = SaveGame.Load<bool>("purchaseGame");
             tutorialPlayed = SaveGame.Load<bool>("tutorialPlayed");
-            heptagonController = FindAnyObjectByType<HeptagonController>();
+            heptagonController = HeptagonController.Instance;
 
             string lastScene = SaveGame.Load<string>("currentScene");
 
@@ -65,40 +68,11 @@ public class LevelLoader : MonoBehaviour {
 
     void Start ()
     {
-
-        //Firebase.FirebaseApp.CheckAndFixDependenciesAsync().ContinueWith(task =>
-        //{
-        //    var dependencyStatus = task.Result;
-        //    if (dependencyStatus == Firebase.DependencyStatus.Available)
-        //    {
-        //        // Create and hold a reference to your FirebaseApp,
-        //        // where app is a Firebase.FirebaseApp property of your application class.
-        //        //app = Firebase.FirebaseApp.DefaultInstance;
-
-        //        // Set a flag here to indicate whether Firebase is ready to use by your app.
-        //    }
-        //    else
-        //    {
-        //        UnityEngine.Debug.LogError(System.String.Format(
-        //          "Could not resolve all Firebase dependencies: {0}", dependencyStatus));
-        //        // Firebase Unity SDK is not safe to use here.
-        //    }
-        //});
-
-        // Get the root reference location of the database.
-        //reference = FirebaseDatabase.DefaultInstance.RootReference;
-        //writeNewUser("0", "try", "try@gmail.com");
-        //Firebase.Analytics.FirebaseAnalytics.LogEvent("progress", "percent", 0.4f);
-
         // Grants the vendor-level consent for AdMob.
         Advertising.GrantDataPrivacyConsent(AdNetwork.AdMob);
 
-        heptagonController = FindAnyObjectByType<HeptagonController>();
+        heptagonController = HeptagonController.Instance;
         currentSceneIndex = SceneManager.GetActiveScene().buildIndex;
-
-        //!!! ONLY FOR DEBUG PURPOSES, UNLOCKED !!!
-        //UpdatePurchaseStatus();
-        //!!! ONLY FOR DEBUG PURPOSES, UNLOCKED !!!
 
         if (currentSceneIndex == 0 || currentSceneIndex == 1)
         {
@@ -107,12 +81,6 @@ public class LevelLoader : MonoBehaviour {
         }
         purchaseGame = SaveGame.Load<bool>("purchaseGame");
         tutorialPlayed = SaveGame.Load<bool>("tutorialPlayed");
-
-        //if (purchaseGame == true)
-        //{
-        //    // Remove ads permanently
-        //    Advertising.RemoveAds();
-        //}
 
         if (purchaseGame == true)
         {
@@ -173,12 +141,11 @@ public class LevelLoader : MonoBehaviour {
         Time.timeScale = 1;
         currentScene = "Scene Selection Screen";
         SceneManager.LoadScene("Scene Selection Screen");
-        //SceneManager.LoadScene("Start Screen");
     }
 
     public void LoadStats()
     {
-        heptagonController = FindAnyObjectByType<HeptagonController>();
+        heptagonController = HeptagonController.Instance;
         numberOfGamesPlayed = SaveGame.Load<int>("numberOfGamesPlayed");
         purchaseGame = SaveGame.Load<bool>("purchaseGame");
         currentScene = "Stats Screen Expanded";
@@ -200,7 +167,6 @@ public class LevelLoader : MonoBehaviour {
     public void LoadLevel1()
     {
 
-        //Firebase.Analytics.FirebaseAnalytics.LogEvent(Firebase.Analytics.FirebaseAnalytics.EventLogin);
         Time.timeScale = 1;
         currentScene = "Level 1 Space for Unity";
         SceneManager.LoadScene("Level 1 Space for Unity");
@@ -212,7 +178,6 @@ public class LevelLoader : MonoBehaviour {
         // Load the default interstitial ad.
         Advertising.LoadInterstitialAd();
 
-        //purchaseGame = true;
         if (purchaseGame || (purchaseGame == false && selectedLevel <= 8))
         {
             if (selectedLevel == 0)
@@ -286,43 +251,9 @@ public class LevelLoader : MonoBehaviour {
         SceneManager.LoadScene(currentSceneIndex + 1);
     }
 
-    //public void RateTheGame()
-    //{
-    //    StoreReview.RequestRating();
-    //}
-
     public void QuitGame()
     {
         Application.Quit();
     }
 
-    //public void RateMyGame()
-    //{
-    //    RateMyApp.AskForReviewNow();
-    //}
-
-    public class User
-    {
-        public string username;
-        public string email;
-
-        public User()
-        {
-        }
-
-        public User(string username, string email)
-        {
-            this.username = username;
-            this.email = email;
-        }
-    }
-
-    //private void writeNewUser(string userId, string name, string email)
-    //{
-    //    User user = new User(name, email);
-    //    string json = JsonUtility.ToJson(user);
-
-    //    //reference.Child("users").Push().SetRawJsonValueAsync(json);
-    //    reference.Child("users").Child(userId).SetRawJsonValueAsync(json);
-    //}
 }

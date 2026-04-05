@@ -11,9 +11,6 @@ public class SlotGeneric : MonoBehaviour
     Text slotManaText;
     SlotSell slotSell;
     bool slotSellFlag;
-    //ParticleSystem particleVFX;
-    //AudioSource audioCardPlaceOnSlot;
-
     public int slotNumber = 0;
 
     private void Start()
@@ -26,8 +23,6 @@ public class SlotGeneric : MonoBehaviour
         
         slotSell = GetComponent<SlotSell>();
         slotSellFlag = slotSell != null;
-        //particleVFX = GetComponentInChildren<ParticleSystem>();
-        //audioCardPlaceOnSlot = GetComponentInChildren<AudioSource>();
 
         ComputeSlotNumber();
     }
@@ -103,15 +98,5 @@ public class SlotGeneric : MonoBehaviour
         
         
     }
-
-    //public void MergeEffectInitiate()
-    //{
-    //    if (particleVFX)
-    //    {
-    //        particleVFX.Play();
-    //        audioCardPlaceOnSlot.Play();
-    //    }
-
-    //}
 
 }

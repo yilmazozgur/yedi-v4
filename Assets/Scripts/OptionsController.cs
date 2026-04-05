@@ -71,7 +71,7 @@ public class OptionsController : MonoBehaviour {
             videoButtonsOptions.gameObject.SetActive(false);
         }
 
-        musicPlayer = FindAnyObjectByType<MusicPlayer>();
+        musicPlayer = MusicPlayer.Instance;
         playerNameInputField = FindAnyObjectByType<OptionsPlayerName>();
         playerName = PlayerPrefsController.GetPlayerName();
         if (playerName == null || playerName == "")
@@ -128,7 +128,7 @@ public class OptionsController : MonoBehaviour {
 
     public void PlayVideo(string videoURL)
     {
-        musicPlayer = FindAnyObjectByType<MusicPlayer>();
+        musicPlayer = MusicPlayer.Instance;
         if (musicPlayer != null)
         {
             musicHalt = true;
@@ -154,7 +154,7 @@ public class OptionsController : MonoBehaviour {
             videoObject.gameObject.SetActive(false);
         }
 
-        musicPlayer = FindAnyObjectByType<MusicPlayer>();
+        musicPlayer = MusicPlayer.Instance;
         if (musicPlayer != null)
         {
             musicHalt = false;
@@ -199,7 +199,7 @@ public class OptionsController : MonoBehaviour {
         //CloudServices.SetString("PlayerName", playerName);
         SetVolume();
         SetDifficulty();
-        FindAnyObjectByType<LevelLoader>().LoadMainMenu();
+        LevelLoader.Instance.LoadMainMenu();
     }
 
     public void SetDefaults()

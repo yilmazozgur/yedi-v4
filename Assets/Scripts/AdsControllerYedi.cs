@@ -5,6 +5,13 @@ using EasyMobile;
 
 public class AdsControllerYedi : MonoBehaviour
 {
+    public static AdsControllerYedi Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     GameInfo gameInfo;
     GameTimer gameTimer;
     LevelController levelController;
@@ -49,7 +56,7 @@ public class AdsControllerYedi : MonoBehaviour
         {
             Debug.Log("Timer not topped up!");
         }
-        levelController = FindAnyObjectByType<LevelController>();
+        levelController = LevelController.Instance;
         if (levelController != null)
         {
             ChangeLevelController();
@@ -100,8 +107,8 @@ public class AdsControllerYedi : MonoBehaviour
         // Grants the vendor-level consent for AdMob.
         Advertising.GrantDataPrivacyConsent(AdNetwork.AdMob);
         gameInfo = FindAnyObjectByType<GameInfo>();
-        gameTimer = FindAnyObjectByType<GameTimer>();
-        levelController = FindAnyObjectByType<LevelController>();
+        gameTimer = GameTimer.Instance;
+        levelController = LevelController.Instance;
 
         // Load the default interstitial ad.
         Advertising.LoadInterstitialAd();

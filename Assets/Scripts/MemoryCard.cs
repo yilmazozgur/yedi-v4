@@ -2,9 +2,8 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class MemoryCard : MonoBehaviour
+public class MemoryCard : CardTypeBase
 {
-    [SerializeField] bool activated = false;
     [SerializeField] public float memoryWaitTime = 2f;
 
     MemoryGenerator memoryGenerator;
@@ -14,20 +13,12 @@ public class MemoryCard : MonoBehaviour
     SpriteRenderer motorBox;
     SpriteRenderer physicalDrawing;
     SpriteRenderer[] otherIcons;
-    CardFrame cardFrameAttached;
-    Card cardAttached;
-    ManaDisplay manaDisplay;
-    float manaReductionMultiplier;
-    float manaIncreaseMultiplier1;
-    float manaIncreaseMultiplier2;
-    float manaIncreaseMultiplier3;
-    string modeMemory = "every action"; // "every action", "show all", "show one", 
+    string modeMemory = "every action";
     CardFrameBackground cardFrameBackground;
     SpriteRenderer spriteRendererBG;
     Color backgroundColor;
 
-    // Start is called before the first frame update
-    void Start()
+    protected override void Start()
     {
         memoryIcon = GetComponentInChildren<SpriteRenderer>();
         if(memoryIcon)
@@ -59,17 +50,10 @@ public class MemoryCard : MonoBehaviour
         cardFrameBackground = GetComponentInParent<CardFrameBackground>();
         spriteRendererBG = cardFrameBackground.GetComponent<SpriteRenderer>();
         backgroundColor = spriteRendererBG.color;
-        //Debug.Log(spriteRendererBG.sortingOrder);
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
+
+        base.Start();
         memoryGenerator = FindAnyObjectByType<MemoryGenerator>();
-        manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
-        manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
-        manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;
-        manaIncreaseMultiplier3 = manaDisplay.manaIncreaseMultiplier3;
-        activated = false;
-        cardFrameAttached = GetComponentInParent<CardFrame>();
-        cardAttached = cardFrameAttached.cardObject;
-        
+
         SetMemory();
     }
 

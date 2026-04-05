@@ -5,6 +5,13 @@ using BayatGames.SaveGameFree;
 
 public class TutorialController : MonoBehaviour
 {
+    public static TutorialController Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     public bool tutorialInitiated = false;
     public bool halted = false;
 
@@ -45,7 +52,7 @@ public class TutorialController : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        levelLoader = FindAnyObjectByType<LevelLoader>();
+        levelLoader = LevelLoader.Instance;
         DeactivateAllTutorialPopups();
     }
 
@@ -269,7 +276,7 @@ public class TutorialController : MonoBehaviour
 
     public void SkipTutorial()
     {
-        levelLoader = FindAnyObjectByType<LevelLoader>();
+        levelLoader = LevelLoader.Instance;
         levelLoader.LoadSceneSelection();
         SaveGame.Save<bool>("tutorialPlayed", true);
     }

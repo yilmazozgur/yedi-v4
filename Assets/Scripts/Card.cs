@@ -17,35 +17,18 @@ public class Card : MonoBehaviour
 
     private void Start()
     {
-        cardDrawer = FindAnyObjectByType<CardDrawer>();
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
+        cardDrawer = CardDrawer.Instance;
+        manaDisplay = ManaDisplay.Instance;
 
         cardType = cardDrawer.GetCardType();
         cardCost = cardDrawer.GetCardCost();
-        //cardType = PlayerPrefs.GetFloat("CardType");
-        //cardCost = PlayerPrefs.GetFloat("CardCost");
         cardMana = Mathf.Round(cardCost * manaDisplay.manaReductionMultiplier);
-        levelLoader = FindAnyObjectByType<LevelLoader>();
+        levelLoader = LevelLoader.Instance;
 
         cardFrame = Instantiate(cardFramePrefab, transform.position, transform.rotation) as CardFrame;
         cardFrame.SetCardObject(this);
         cardFrame.SetCardType(cardType);
 
-    }
-
-    public void InitCardFrame(CardFrame cardFrameInput=null)
-    {
-        if (cardFrameInput == null)
-        {
-            cardFrame = Instantiate(cardFramePrefab, transform.position, transform.rotation) as CardFrame;
-        }
-        else
-        {
-            cardFrame = cardFrameInput;
-        }
-
-        cardFrame.SetCardObject(this);
-        cardFrame.SetCardType(cardType);
     }
 
     public float GetCardMana()
@@ -144,11 +127,6 @@ public class Card : MonoBehaviour
         public int colorInfo { get; set; }
         public int shapeInfo { get; set; }
         public List<string> wordInfo { get; set; }
-    }
-
-    public Card ShallowCopy()
-    {
-        return (Card) this.MemberwiseClone();
     }
 
 }

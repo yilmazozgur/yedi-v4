@@ -5,6 +5,13 @@ using UnityEngine.UI;
 
 public class SuperDisplay : MonoBehaviour
 {
+    public static SuperDisplay Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     public float baseSuper = 3;
     Text superText;
     public float superCount;

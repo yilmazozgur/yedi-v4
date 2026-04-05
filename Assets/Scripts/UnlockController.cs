@@ -13,8 +13,8 @@ public class UnlockController : MonoBehaviour
     void Start()
     {
         isInitialized = InAppPurchasing.IsInitialized();
-        levelLoader = FindAnyObjectByType<LevelLoader>();
-        heptagonController = FindAnyObjectByType<HeptagonController>();
+        levelLoader = LevelLoader.Instance;
+        heptagonController = HeptagonController.Instance;
 
         if (isInitialized)
         {
@@ -66,8 +66,8 @@ public class UnlockController : MonoBehaviour
     // Purchase the sample product
     public void PurchaseUnlockProduct()
     {
-        levelLoader = FindAnyObjectByType<LevelLoader>();
-        heptagonController = FindAnyObjectByType<HeptagonController>();
+        levelLoader = LevelLoader.Instance;
+        heptagonController = HeptagonController.Instance;
         if (levelLoader.purchaseGame)
         {
             heptagonController.ShowPurchasedDialog();
@@ -87,8 +87,8 @@ public class UnlockController : MonoBehaviour
         {
             case EM_IAPConstants.Product_unlock:
                 Debug.Log("Unlock was purchased. The user should be granted it now.");
-                levelLoader = FindAnyObjectByType<LevelLoader>();
-                heptagonController = FindAnyObjectByType<HeptagonController>();
+                levelLoader = LevelLoader.Instance;
+                heptagonController = HeptagonController.Instance;
                 levelLoader.UpdatePurchaseStatus();
                 heptagonController.HideUnlockDialog();
                 heptagonController.ShowPurchasedDialog();

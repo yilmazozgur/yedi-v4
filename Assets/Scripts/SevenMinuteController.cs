@@ -8,6 +8,13 @@ using BayatGames.SaveGameFree;
 
 public class SevenMinuteController : MonoBehaviour
 {
+    public static SevenMinuteController Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     string[] gamesList = { "Math", "Visual", "Spatial", "Verbal",
         "Music", "Memory", "Physical" };
     string[] mathGameList = { "Math: Add", "Math: Multiply", "Math: Coprimes",
@@ -96,7 +103,7 @@ public class SevenMinuteController : MonoBehaviour
 
         workoutProgressBar = FindAnyObjectByType<WorkoutProgressBar>();
         workoutNextGameName = FindAnyObjectByType<WorkoutNextGameName>();
-        heptagonController = FindAnyObjectByType<HeptagonController>();
+        heptagonController = HeptagonController.Instance;
         textNextGame = workoutNextGameName.GetComponent<Text>();
 
         if (SaveGame.Exists("workoutInitialized"))

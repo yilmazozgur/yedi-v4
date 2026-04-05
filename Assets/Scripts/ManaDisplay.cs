@@ -5,6 +5,13 @@ using UnityEngine.UI;
 
 public class ManaDisplay : MonoBehaviour
 {
+    public static ManaDisplay Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     public float baseMana = 200;
     [SerializeField] float timeManaDiv = 5f;
     public float manaValue;
@@ -31,8 +38,8 @@ public class ManaDisplay : MonoBehaviour
     void Start()
     {
         baseMana = 200f;
-        levelController = FindAnyObjectByType<LevelController>();
-        gameTimer = FindAnyObjectByType<GameTimer>();
+        levelController = LevelController.Instance;
+        gameTimer = GameTimer.Instance;
         difficulty = 0f;
         //difficulty = PlayerPrefsController.GetDifficulty();
         manaValue = baseMana - difficulty * 50f;
@@ -70,7 +77,7 @@ public class ManaDisplay : MonoBehaviour
         levelTimer = Time.timeSinceLevelLoad;
         UpdateDisplay();
 
-        statsCollectorExpanded = FindAnyObjectByType<StatsCollectorExpanded>();
+        statsCollectorExpanded = StatsCollectorExpanded.Instance;
         //AddMana(0f);
         //statsCollectorExpanded.UpdateMaxManaValue(manaValue);
     }

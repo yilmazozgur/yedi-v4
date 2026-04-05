@@ -5,6 +5,12 @@ using UnityEngine.UI;
 
 public class StatsCollectorExpanded : MonoBehaviour
 {
+    public static StatsCollectorExpanded Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
 
     StatsControllerExpanded statsControllerExpanded;
     LevelController levelController;
@@ -103,11 +109,11 @@ public class StatsCollectorExpanded : MonoBehaviour
             }
         }
 
-        statsControllerExpanded = FindAnyObjectByType<StatsControllerExpanded>();
+        statsControllerExpanded = StatsControllerExpanded.Instance;
         avgGeneric = statsControllerExpanded.GetAvgGeneric();
         stdGeneric = statsControllerExpanded.GetStdGeneric();
         PrepareMeanAndStd();
-        levelController = FindAnyObjectByType<LevelController>();
+        levelController = LevelController.Instance;
         gameResultManaText = FindAnyObjectByType<GameResultMana>().GetComponent<Text>();
         gameResultManaSpeedText = FindAnyObjectByType<GameResultManaSpeed>().GetComponent<Text>();
         gameResultMathText = FindAnyObjectByType<GameResultMath>().GetComponent<Text>();
@@ -437,7 +443,7 @@ public class StatsCollectorExpanded : MonoBehaviour
             }
         }
 
-        statsControllerExpanded = FindAnyObjectByType<StatsControllerExpanded>();
+        statsControllerExpanded = StatsControllerExpanded.Instance;
         statsControllerExpanded.FlushCurrentGameData();
     }
 

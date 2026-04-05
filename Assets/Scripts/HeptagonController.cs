@@ -7,6 +7,13 @@ using LightShaft.Scripts;
 
 public class HeptagonController : MonoBehaviour
 {
+    public static HeptagonController Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     HeptagonCanvas heptagonCanvas;
     HeptagonItem[] heptagonItems;
 
@@ -123,7 +130,7 @@ public class HeptagonController : MonoBehaviour
        
         heptagonCanvas = FindAnyObjectByType<HeptagonCanvas>();
         
-        levelLoader = FindAnyObjectByType<LevelLoader>();
+        levelLoader = LevelLoader.Instance;
 
         videoObject = FindAnyObjectByType<VideoObject>();
         if(videoObject != null)
@@ -158,7 +165,7 @@ public class HeptagonController : MonoBehaviour
 
     public void PlayVideo(string videoURL)
     {
-        musicPlayer = FindAnyObjectByType<MusicPlayer>();
+        musicPlayer = MusicPlayer.Instance;
         if (musicPlayer != null)
         {
             musicPlayer.SetVolume(0f);
@@ -182,7 +189,7 @@ public class HeptagonController : MonoBehaviour
             videoObject.gameObject.SetActive(false);
         }
 
-        musicPlayer = FindAnyObjectByType<MusicPlayer>();
+        musicPlayer = MusicPlayer.Instance;
         if (musicPlayer != null)
         {
             musicPlayer.SetVolume(PlayerPrefsController.GetMasterVolume());

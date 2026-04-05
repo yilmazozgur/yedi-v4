@@ -24,6 +24,7 @@ public class FindClosestSlot : MonoBehaviour
 		cardFrame = GetComponent<CardFrame>();
         SlotNew slotSelectedSlotNew = FindAnyObjectByType<SlotNew>();
         slotSelected = slotSelectedSlotNew.GetComponent<SlotGeneric>();
+		allSlots = FindObjectsByType<SlotGeneric>(FindObjectsSortMode.None);
 		ReInitMinDistances();
 
 	}
@@ -53,7 +54,6 @@ public class FindClosestSlot : MonoBehaviour
 
 		distanceToClosestSlot = Mathf.Infinity;
 		closestSlot = null;
-		allSlots = GameObject.FindObjectsByType<SlotGeneric>(FindObjectsSortMode.None);
 
 		indexIter = 0;
 		foreach (SlotGeneric currentSlot in allSlots)

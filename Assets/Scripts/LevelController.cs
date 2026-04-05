@@ -5,6 +5,13 @@ using BayatGames.SaveGameFree;
 
 public class LevelController : MonoBehaviour {
 
+    public static LevelController Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     float waitToLoad = 1f;
     int numberOfCards = 0;
     bool levelTimerFinished = false;
@@ -81,22 +88,22 @@ public class LevelController : MonoBehaviour {
         }
         //Debug.Log(wordDictionary.Count);
 
-        cardDrawer = FindAnyObjectByType<CardDrawer>();
-        heptagonController = FindAnyObjectByType<HeptagonController>();
-        statsControllerExpanded = FindAnyObjectByType<StatsControllerExpanded>();
+        cardDrawer = CardDrawer.Instance;
+        heptagonController = HeptagonController.Instance;
+        statsControllerExpanded = StatsControllerExpanded.Instance;
         winLabel = FindAnyObjectByType<LevelCompleteCanvas>();
         tutorial = FindAnyObjectByType<Tutorial>();
-        sevenMinuteController = FindAnyObjectByType<SevenMinuteController>();
-        levelLoader = FindAnyObjectByType<LevelLoader>();
-        continueButton = FindAnyObjectByType<ContinueButton>();
+        sevenMinuteController = SevenMinuteController.Instance;
+        levelLoader = LevelLoader.Instance;
+        continueButton = ContinueButton.Instance;
 
         winLabelCanvas = winLabel.GetComponent<Canvas>();
         winLabelCanvas.enabled = false;
         mainCanvasCanvas = FindAnyObjectByType<MainCanvas>().GetComponent<Canvas>();
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
-        beatGenerator = FindAnyObjectByType<BeatGenerator>();
-        gameTimer = FindAnyObjectByType<GameTimer>();
-        statsCollectorExpanded = FindAnyObjectByType<StatsCollectorExpanded>();
+        manaDisplay = ManaDisplay.Instance;
+        beatGenerator = BeatGenerator.Instance;
+        gameTimer = GameTimer.Instance;
+        statsCollectorExpanded = StatsCollectorExpanded.Instance;
 
         selectedLevel = SaveGame.Load<int>("selectedLevel");
         BuyCardButton[] buyCardButtonList = FindObjectsByType<BuyCardButton>(FindObjectsSortMode.None);
@@ -149,7 +156,7 @@ public class LevelController : MonoBehaviour {
         statsCollectorExpanded.FlushCurrentGameData();
         gameTimer.SetTime();
 
-        adsControllerYedi = FindAnyObjectByType<AdsControllerYedi>();
+        adsControllerYedi = AdsControllerYedi.Instance;
         if (adsControllerYedi != null)
         {
             adsControllerYedi.ShowInterstitialAd();
@@ -233,7 +240,7 @@ public class LevelController : MonoBehaviour {
             modeMotor = null;
 
             tutorial.gameObject.SetActive(true);
-            tutorialController = FindAnyObjectByType<TutorialController>();
+            tutorialController = TutorialController.Instance;
             if(tutorialController)
             {
                 tutorialController.InitiateTutorial();
@@ -888,7 +895,7 @@ public class LevelController : MonoBehaviour {
 
     public void ReturnFromRewardedAd()
     {
-        gameTimer = FindAnyObjectByType<GameTimer>();
+        gameTimer = GameTimer.Instance;
         gameTimer.gamePaused = false;
         gamePaused = false;
         SaveGame.Save<bool>("gamePaused", false);
@@ -901,7 +908,7 @@ public class LevelController : MonoBehaviour {
         mainCanvasCanvas = FindAnyObjectByType<MainCanvas>().GetComponent<Canvas>();
         mainCanvasCanvas.enabled = true;
 
-        cardDrawer = FindAnyObjectByType<CardDrawer>();
+        cardDrawer = CardDrawer.Instance;
         if (cardDrawer)
         {
             cardDrawer.haltCardDraw = false;
@@ -928,13 +935,13 @@ public class LevelController : MonoBehaviour {
     public void BackButtonPressed()
     {
         DestroyGame();
-        levelLoader = FindAnyObjectByType<LevelLoader>();
+        levelLoader = LevelLoader.Instance;
         levelLoader.LoadSceneSelection();
     }
 
     public void PauseGame()
     {
-        gameTimer = FindAnyObjectByType<GameTimer>();
+        gameTimer = GameTimer.Instance;
         numberOfRewardedAdsWatched = SaveGame.Load<int>("numberOfRewardedAdsWatched");
         gamePaused = SaveGame.Load<bool>("gamePaused");
         //Debug.Log(gamePaused);
@@ -942,7 +949,7 @@ public class LevelController : MonoBehaviour {
         if (gameTimer.ReturnTimerFinished() == true && numberOfRewardedAdsWatched < 2)
         {
             //Debug.Log("Game finished");
-            adsControllerYedi = FindAnyObjectByType<AdsControllerYedi>();
+            adsControllerYedi = AdsControllerYedi.Instance;
             if (adsControllerYedi != null)
             {
                 gamePaused = true;
@@ -959,7 +966,7 @@ public class LevelController : MonoBehaviour {
 
         if (gamePaused == false)
         {
-            gameTimer = FindAnyObjectByType<GameTimer>();
+            gameTimer = GameTimer.Instance;
             gameTimer.gamePaused = true;
             gamePaused = true;
             SaveGame.Save<bool>("gamePaused", true);
@@ -971,7 +978,7 @@ public class LevelController : MonoBehaviour {
             winLabelCanvas = winLabel.GetComponent<Canvas>();
             winLabelCanvas.enabled = true;
 
-            cardDrawer = FindAnyObjectByType<CardDrawer>();
+            cardDrawer = CardDrawer.Instance;
             if (cardDrawer)
             {
                 cardDrawer.haltCardDraw = true;
@@ -979,7 +986,7 @@ public class LevelController : MonoBehaviour {
         }
         else
         {
-            gameTimer = FindAnyObjectByType<GameTimer>();
+            gameTimer = GameTimer.Instance;
             gameTimer.gamePaused = false;
             gamePaused = false;
             SaveGame.Save<bool>("gamePaused", false);
@@ -991,7 +998,7 @@ public class LevelController : MonoBehaviour {
             mainCanvasCanvas = FindAnyObjectByType<MainCanvas>().GetComponent<Canvas>();
             mainCanvasCanvas.enabled = true;
 
-            cardDrawer = FindAnyObjectByType<CardDrawer>();
+            cardDrawer = CardDrawer.Instance;
             if(cardDrawer)
             {
                 cardDrawer.haltCardDraw = false;
@@ -1008,7 +1015,7 @@ public class LevelController : MonoBehaviour {
             return;
         }
 
-        gameTimer = FindAnyObjectByType<GameTimer>();
+        gameTimer = GameTimer.Instance;
         gameTimer.gamePaused = false;
         gamePaused = false;
         SaveGame.Save<bool>("gamePaused", false);
@@ -1016,7 +1023,7 @@ public class LevelController : MonoBehaviour {
         mainCanvasCanvas = FindAnyObjectByType<MainCanvas>().GetComponent<Canvas>();
         mainCanvasCanvas.enabled = true;
 
-        cardDrawer = FindAnyObjectByType<CardDrawer>();
+        cardDrawer = CardDrawer.Instance;
         cardDrawer.haltCardDraw = false;
 
         heptagonController.HeptagonHideHelp();
@@ -1024,7 +1031,7 @@ public class LevelController : MonoBehaviour {
 
     public void ShowHelp()
     {
-        //gameTimer = FindAnyObjectByType<GameTimer>();
+        //gameTimer = GameTimer.Instance;
         //if (gameTimer.ReturnTimerFinished() == true)
         //{
         //    return;
@@ -1032,7 +1039,7 @@ public class LevelController : MonoBehaviour {
         gamePaused = SaveGame.Load<bool>("gamePaused");
         if (gamePaused == false)
         {
-            gameTimer = FindAnyObjectByType<GameTimer>();
+            gameTimer = GameTimer.Instance;
             gameTimer.gamePaused = true;
             gamePaused = true;
             SaveGame.Save<bool>("gamePaused", true);
@@ -1040,14 +1047,14 @@ public class LevelController : MonoBehaviour {
             mainCanvasCanvas = FindAnyObjectByType<MainCanvas>().GetComponent<Canvas>();
             mainCanvasCanvas.enabled = false;
 
-            cardDrawer = FindAnyObjectByType<CardDrawer>();
+            cardDrawer = CardDrawer.Instance;
             if (cardDrawer)
             {
                 cardDrawer.haltCardDraw = true;
             }
                 
 
-            heptagonController = FindAnyObjectByType<HeptagonController>();
+            heptagonController = HeptagonController.Instance;
             if(heptagonController != null)
             {
                 heptagonController.HeptagonShowHelp();
@@ -1056,7 +1063,7 @@ public class LevelController : MonoBehaviour {
         }
         else
         {
-            gameTimer = FindAnyObjectByType<GameTimer>();
+            gameTimer = GameTimer.Instance;
             gameTimer.gamePaused = false;
             gamePaused = false;
             SaveGame.Save<bool>("gamePaused", false);
@@ -1064,13 +1071,13 @@ public class LevelController : MonoBehaviour {
             mainCanvasCanvas = FindAnyObjectByType<MainCanvas>().GetComponent<Canvas>();
             mainCanvasCanvas.enabled = true;
 
-            cardDrawer = FindAnyObjectByType<CardDrawer>();
+            cardDrawer = CardDrawer.Instance;
             if (cardDrawer)
             {
                 cardDrawer.haltCardDraw = false;
             }
 
-            heptagonController = FindAnyObjectByType<HeptagonController>();
+            heptagonController = HeptagonController.Instance;
             if (heptagonController != null)
             {
                 heptagonController.HeptagonHideHelp();
@@ -1126,8 +1133,8 @@ public class LevelController : MonoBehaviour {
         levelTimerFinished = SaveGame.Load<bool>("levelTimerFinished");
         //yield return new WaitForSeconds(waitToLoad);
         Debug.Log(levelTimerFinished);
-        statsControllerExpanded = FindAnyObjectByType<StatsControllerExpanded>();
-        beatGenerator = FindAnyObjectByType<BeatGenerator>();
+        statsControllerExpanded = StatsControllerExpanded.Instance;
+        beatGenerator = BeatGenerator.Instance;
         if (levelTimerFinished == true)
         {
             Debug.Log("Stats saved.");

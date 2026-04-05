@@ -3,25 +3,16 @@ using System.Collections.Generic;
 using UnityEngine;
 using System.Linq;
 
-public class MotorCard : MonoBehaviour
+public class MotorCard : CardTypeBase
 {
-    [SerializeField] bool activated = false;
     [SerializeField] float successNonlienarity = 0.7f;
 
     MotorGenerator motorGenerator;
     SpriteRenderer physicalRenderer;
     SpriteRenderer boxRenderer;
-    CardFrame cardFrameAttached;
-    Card cardAttached;
-    ManaDisplay manaDisplay;
-    float manaReductionMultiplier;
-    float manaIncreaseMultiplier1;
-    float manaIncreaseMultiplier2;
-    float manaIncreaseMultiplier3;
-    string modeMotor = "speed accuracy"; //or "speed accuracy halfway"
+    string modeMotor = "speed accuracy";
 
-    // Start is called before the first frame update
-    void Start()
+    protected override void Start()
     {
         SpriteRenderer[] spriteRenderers = GetComponentsInChildren<SpriteRenderer>();
         foreach (SpriteRenderer spriteIter in spriteRenderers)
@@ -38,14 +29,8 @@ public class MotorCard : MonoBehaviour
             }
         }
 
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
+        base.Start();
         motorGenerator = FindAnyObjectByType<MotorGenerator>();
-        manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
-        manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
-        manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;
-        manaIncreaseMultiplier3 = manaDisplay.manaIncreaseMultiplier3;
-        activated = false;
-        cardFrameAttached = GetComponentInParent<CardFrame>();
         SetMotor();
     }
 

@@ -14,9 +14,9 @@ public class ManaPerTime : MonoBehaviour
     void Start()
     {
         manaPerTimeText = GetComponent<Text>();
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
+        manaDisplay = ManaDisplay.Instance;
         manaPerTimevalue = 0;
-        levelController = FindAnyObjectByType<LevelController>();
+        levelController = LevelController.Instance;
         UpdateDisplay();
     }
 

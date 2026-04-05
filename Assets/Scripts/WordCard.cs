@@ -6,10 +6,9 @@ using System.IO;
 using BayatGames.SaveGameFree;
 using TMPro;
 
-public class WordCard : MonoBehaviour
+public class WordCard : CardTypeBase
 {
     [SerializeField] public string wordSelected;
-    [SerializeField] bool activated = false;
 
     string[] wordListVerbs = new string[14] { "appear", "vanish", "contract", "expand",
         "fail", "succeed", "help", "hinder", "separate", "join",
@@ -32,7 +31,6 @@ public class WordCard : MonoBehaviour
     string[] wordListQuestions = new string[14] { "what", "this", "where", "here", "when", "now",
         "why", "because", "who", "she" , "whom", "her" ,"how often", "rarely"};
     string[] characterList = new string[19] { "e", "t", "a", "o", "u", "i", "n", "s", "r", "h", "l", "d", "c" , "d", "p", "m", "g", "f", "b"};
-    //string[] wordsDict = File.ReadAllLines("/Users/ozguryilmaz/Desktop/Others/Macofu/Udemy/yedi/Assets/Text/wordlist.csv");
 
     string[] wordList;
     public List<string> wordSelectedList = new List<string>();
@@ -41,34 +39,16 @@ public class WordCard : MonoBehaviour
     TextMeshProUGUI textRenderer;
     string wordInitial;
     string nihilWord = "nihil";
-    CardFrame cardFrameAttached;
-    Card cardAttached;
     int randomIndex;
-    ManaDisplay manaDisplay;
-    float manaReductionMultiplier;
-    float manaIncreaseMultiplier1;
-    float manaIncreaseMultiplier2;
-    float manaIncreaseMultiplier3;
-    bool cardSuper;
     string modeWord = "verbs";
 
-    void Start()
+    protected override void Start()
     {
-        levelController = FindAnyObjectByType<LevelController>();
-        activated = false;
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
-        manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
-        manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
-        manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;
-        manaIncreaseMultiplier3 = manaDisplay.manaIncreaseMultiplier3;
-
-        cardFrameAttached = GetComponentInParent<CardFrame>();
-        cardAttached = cardFrameAttached.cardObject;
-        cardSuper = cardFrameAttached.cardSuper;
+        base.Start();
+        levelController = LevelController.Instance;
         SetWordsForMode();
         randomIndex = Random.Range(0, wordList.Length);
         wordInitial = SetWord();
-
     }
 
     public void SetWordsForMode()

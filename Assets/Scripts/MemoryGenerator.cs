@@ -73,7 +73,7 @@ public class MemoryGenerator : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        cardDrawer = FindAnyObjectByType<CardDrawer>();
+        cardDrawer = CardDrawer.Instance;
         slot1Object = FindAnyObjectByType<Slot1>();
         slot2Object = FindAnyObjectByType<Slot2>();
         slot3Object = FindAnyObjectByType<Slot3>();

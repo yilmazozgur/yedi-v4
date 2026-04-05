@@ -1,10 +1,16 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-//using DigitalRubyShared;
 
 public class CardDrawer : MonoBehaviour
 {
+    public static CardDrawer Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     [SerializeField] Card cardPrefab;
     [SerializeField] float cardCost;
     [SerializeField] bool cardSuper;
@@ -17,18 +23,15 @@ public class CardDrawer : MonoBehaviour
     TutorialController tutorialController;
     bool firstCardDrawn = false;
 
-    //private TapGestureRecognizer doubleTapGesture;
-
     ManaDisplay manaDisplay;
     SuperDisplay superDisplay;
     public float cardType;
     private void Start()
     {
-        //CreateDoubleTapGesture();
-        levelController = FindAnyObjectByType<LevelController>();
-        tutorialController = FindAnyObjectByType<TutorialController>();
-        manaDisplay = FindAnyObjectByType<ManaDisplay>();
-        superDisplay = FindAnyObjectByType<SuperDisplay>();
+        levelController = LevelController.Instance;
+        tutorialController = TutorialController.Instance;
+        manaDisplay = ManaDisplay.Instance;
+        superDisplay = SuperDisplay.Instance;
         cardType = -1f;
     }
 
@@ -39,22 +42,6 @@ public class CardDrawer : MonoBehaviour
             DrawCard();
         }
     }
-
-    //private void DoubleTapGestureCallback(GestureRecognizer gesture)
-    //{
-    //    if (gesture.State == GestureRecognizerState.Ended)
-    //    {
-    //        DrawCard();
-    //    }
-    //}
-
-    //private void CreateDoubleTapGesture()
-    //{
-    //    doubleTapGesture = new TapGestureRecognizer();
-    //    doubleTapGesture.NumberOfTapsRequired = 2;
-    //    doubleTapGesture.StateUpdated += DoubleTapGestureCallback;
-    //    FingersScript.Instance.AddGesture(doubleTapGesture);
-    //}
 
     public void DrawCard()
     {
@@ -79,7 +66,6 @@ public class CardDrawer : MonoBehaviour
                     {
                         Transform transformNewSlot = slotNewObject.transform;
                         Card newCard = Instantiate(cardPrefab, transformNewSlot.position, transformNewSlot.rotation) as Card;
-                        //newCard.InitCardFrame();
                         slotNewObject.DrawEffectInitiate();
                         slotGenericObject.SetFilledInfo(true);
                         slotGenericObject.SetCardObject(newCard);
@@ -91,7 +77,6 @@ public class CardDrawer : MonoBehaviour
                     {
                         Transform transformNewSlot = slotNewObject.transform;
                         Card newCard = Instantiate(cardPrefab, transformNewSlot.position, transformNewSlot.rotation) as Card;
-                        //newCard.InitCardFrame();
                         slotNewObject.DrawEffectInitiate();
                         slotGenericObject.SetFilledInfo(true);
                         slotGenericObject.SetCardObject(newCard);
@@ -121,13 +106,11 @@ public class CardDrawer : MonoBehaviour
     public void SetCardType(float cardTypeValue)
     {
         cardType = cardTypeValue;
-        //PlayerPrefs.SetFloat("CardType", cardType);
     }
 
     public void SetCardCost(float cardCostValue)
     {
         cardCost = cardCostValue;
-        //PlayerPrefs.SetFloat("CardCost", cardCost);
     }
 
     public void SetSuperCard(bool superSelection)

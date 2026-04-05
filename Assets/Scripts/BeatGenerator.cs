@@ -4,6 +4,12 @@ using UnityEngine;
 
 public class BeatGenerator : MonoBehaviour
 {
+    public static BeatGenerator Instance { get; private set; }
+
+    private void Awake()
+    {
+        Instance = this;
+    }
 
     BeatSource beat1;
     BeatSource beat2;
@@ -23,7 +29,7 @@ public class BeatGenerator : MonoBehaviour
 
     void Start()
     {
-        musicPlayer = FindAnyObjectByType<MusicPlayer>();
+        musicPlayer = MusicPlayer.Instance;
         if (beatActivated == true)
         {
             if (musicPlayer != null)

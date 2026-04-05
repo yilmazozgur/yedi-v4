@@ -52,3 +52,6 @@ Thumbs.db
 # Keystore (contains signing keys - sensitive!)
 /Keystore/
 .vscode/
+
+# Downloaded Unity packages (imported via Editor)
+*.unitypackage
