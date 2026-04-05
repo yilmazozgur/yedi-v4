@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using BayatGames.SaveGameFree;
-using LightShaft.Scripts;
 
 public class HeptagonController : MonoBehaviour
 {
@@ -109,17 +108,15 @@ public class HeptagonController : MonoBehaviour
 
     LevelLoader levelLoader;
 
-    VideoObject videoObject;
-    YoutubePlayer youtubePlayer;
     MusicPlayer musicPlayer;
 
-    string modeNumber;
-    string modeColor;
-    string modeShape;
-    string modeWord;
-    string modeBeat;
-    string modeMemory;
-    string modeMotor;
+    public static string modeNumber;
+    public static string modeColor;
+    public static string modeShape;
+    public static string modeWord;
+    public static string modeBeat;
+    public static string modeMemory;
+    public static string modeMotor;
 
     bool cycleThrough = false;
     public bool validSelection = false;
@@ -132,14 +129,12 @@ public class HeptagonController : MonoBehaviour
         
         levelLoader = LevelLoader.Instance;
 
-        videoObject = FindAnyObjectByType<VideoObject>();
-        if(videoObject != null)
+        // Hide video player object left in scenes
+        VideoObject videoObject = FindAnyObjectByType<VideoObject>();
+        if (videoObject != null)
         {
-            youtubePlayer = videoObject.GetComponentInChildren<YoutubePlayer>();
             videoObject.gameObject.SetActive(false);
         }
-        
-
 
         unlockDialogCanvas = FindAnyObjectByType<UnlockDialogCanvas>();
         if (unlockDialogCanvas)
@@ -165,35 +160,12 @@ public class HeptagonController : MonoBehaviour
 
     public void PlayVideo(string videoURL)
     {
-        musicPlayer = MusicPlayer.Instance;
-        if (musicPlayer != null)
-        {
-            musicPlayer.SetVolume(0f);
-        }
-
-        if (videoObject != null)
-        {
-            videoObject.gameObject.SetActive(true);
-            if (youtubePlayer != null)
-            {
-                youtubePlayer.Play(videoURL);
-            }
-        }
-
+        // Video playback removed
     }
 
     public void HideVideo()
     {
-        if (videoObject != null)
-        {
-            videoObject.gameObject.SetActive(false);
-        }
-
-        musicPlayer = MusicPlayer.Instance;
-        if (musicPlayer != null)
-        {
-            musicPlayer.SetVolume(PlayerPrefsController.GetMasterVolume());
-        }
+        // Video playback removed
     }
 
     private void FindAllHeptagonItems()
@@ -627,13 +599,14 @@ public class HeptagonController : MonoBehaviour
 
     public void HeptagonShowHelp()
     {
-        string modeNumberHelp = SaveGame.Load<string>("modeNumber");
-        string modeColorHelp = SaveGame.Load<string>("modeColor");
-        string modeShapeHelp = SaveGame.Load<string>("modeShape");
-        string modeWordHelp = SaveGame.Load<string>("modeWord");
-        string modeBeatHelp = SaveGame.Load<string>("modeBeat");
-        string modeMemoryHelp = SaveGame.Load<string>("modeMemory");
-        string modeMotorHelp = SaveGame.Load<string>("modeMotor");
+        // Use static fields directly instead of SaveGame.Load (async race condition in WebGL)
+        string modeNumberHelp = modeNumber;
+        string modeColorHelp = modeColor;
+        string modeShapeHelp = modeShape;
+        string modeWordHelp = modeWord;
+        string modeBeatHelp = modeBeat;
+        string modeMemoryHelp = modeMemory;
+        string modeMotorHelp = modeMotor;
 
         cycleThrough = false;
 

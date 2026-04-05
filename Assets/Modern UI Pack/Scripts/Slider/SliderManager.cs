@@ -116,13 +116,13 @@ namespace Michsky.UI.ModernUIPack
 
         public void OnPointerEnter(PointerEventData eventData)
         {
-            if (showPopupValue == true)
+            if (showPopupValue == true && sliderAnimator != null)
                 sliderAnimator.Play("Value In");
         }
 
         public void OnPointerExit(PointerEventData eventData)
         {
-            if (showPopupValue == true)
+            if (showPopupValue == true && sliderAnimator != null)
                 sliderAnimator.Play("Value Out");
         }
     }

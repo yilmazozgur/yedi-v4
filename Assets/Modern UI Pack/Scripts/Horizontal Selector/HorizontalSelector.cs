@@ -143,13 +143,12 @@ namespace Michsky.UI.ModernUIPack
                     catch { }
 
                     selectorEvent.Invoke(index);
-                    selectorAnimator.Play(null);
-                    selectorAnimator.StopPlayback();
-
-                    if (invertAnimation == true)
-                        selectorAnimator.Play("Forward");
-                    else
-                        selectorAnimator.Play("Previous");
+                    if (selectorAnimator != null)
+                    {
+                        selectorAnimator.Play(null);
+                        selectorAnimator.StopPlayback();
+                        selectorAnimator.Play(invertAnimation ? "Forward" : "Previous");
+                    }
 
                     if (saveValue == true)
                         PlayerPrefs.SetInt(selectorTag + "HSelectorValue", index);
@@ -239,13 +238,12 @@ namespace Michsky.UI.ModernUIPack
                     catch { }
 
                     selectorEvent.Invoke(index);
-                    selectorAnimator.Play(null);
-                    selectorAnimator.StopPlayback();
-
-                    if (invertAnimation == true)
-                        selectorAnimator.Play("Previous");
-                    else
-                        selectorAnimator.Play("Forward");
+                    if (selectorAnimator != null)
+                    {
+                        selectorAnimator.Play(null);
+                        selectorAnimator.StopPlayback();
+                        selectorAnimator.Play(invertAnimation ? "Previous" : "Forward");
+                    }
 
                     if (saveValue == true)
                         PlayerPrefs.SetInt(selectorTag + "HSelectorValue", index);

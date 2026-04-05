@@ -1,9 +1,8 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using BayatGames.SaveGameFree;
-using EasyMobile;
 
 
 public class LevelLoader : MonoBehaviour {
@@ -17,16 +16,12 @@ public class LevelLoader : MonoBehaviour {
 
     int timeToWait = 3;
     public int currentSceneIndex;
-    public int selectedLevel;
+    public static int selectedLevel;
     HeptagonController heptagonController;
     string currentScene;
 
-    public bool purchaseGame;
+    public bool purchaseGame = true; // Always unlocked
     public bool tutorialPlayed;
-    int numberOfGamesPlayed;
-    public int maxFreeGamesForStats = 20;
-    UnlockButton unlockButton;
-    UnlockController unlockController;
 
     private void OnApplicationPause(bool pause)
     {
@@ -38,7 +33,6 @@ public class LevelLoader : MonoBehaviour {
         else
         {
             //Load last scene
-            purchaseGame = SaveGame.Load<bool>("purchaseGame");
             tutorialPlayed = SaveGame.Load<bool>("tutorialPlayed");
             heptagonController = HeptagonController.Instance;
 
@@ -54,7 +48,7 @@ public class LevelLoader : MonoBehaviour {
             }
             else if (lastScene == "Options Screen")
             {
-                LoadOptionsScreen();
+                LoadSceneSelection();
             }
             else if (lastScene == "Level 1 Space for Unity")
             {
@@ -64,64 +58,44 @@ public class LevelLoader : MonoBehaviour {
         }
     }
 
-   
+
 
     void Start ()
     {
-        // Grants the vendor-level consent for AdMob.
-        Advertising.GrantDataPrivacyConsent(AdNetwork.AdMob);
-
         heptagonController = HeptagonController.Instance;
         currentSceneIndex = SceneManager.GetActiveScene().buildIndex;
 
         if (currentSceneIndex == 0 || currentSceneIndex == 1)
         {
-            Debug.Log("Intro secreens");
+            Debug.Log("Intro screens");
             StartCoroutine(WaitForTime());
         }
-        purchaseGame = SaveGame.Load<bool>("purchaseGame");
-        tutorialPlayed = SaveGame.Load<bool>("tutorialPlayed");
+        purchaseGame = true; // Always unlocked
+        tutorialPlayed = true; // Skip tutorial by default for AI testbed
 
-        if (purchaseGame == true)
+        // Hide buttons that don't apply to WebGL AI testbed
+        RectTransform playBtnRect = null;
+        RectTransform statsBtnRect = null;
+        foreach (UnityEngine.UI.Button btn in FindObjectsByType<UnityEngine.UI.Button>(FindObjectsSortMode.None))
         {
-            unlockButton = FindAnyObjectByType<UnlockButton>();
-            if(unlockButton != null)
-            {
-                unlockButton.gameObject.SetActive(false);
-            }
+            string n = btn.gameObject.name;
+            if (n == "Quit Button" || n == "Options Button" || n == "Unlock Button")
+                btn.gameObject.SetActive(false);
+            else if (n == "Play Button")
+                playBtnRect = btn.GetComponent<RectTransform>();
+            else if (n == "Stats Button")
+                statsBtnRect = btn.GetComponent<RectTransform>();
         }
-        else
-        { //Check whether purchased before
-            
-            unlockController = FindAnyObjectByType<UnlockController>();
-            if(unlockController == null)
-            {
-                StartCoroutine(InitUnlockObject());
-            }
-            if(unlockController != null)
-            {
-                bool isOwned = unlockController.ReturnOwnStatus();
-                if(isOwned == true)
-                {
-                    Debug.Log("Owned the game before");
-                    UpdatePurchaseStatus();
-                }
-            }
-        }
-       
-
-    }
-
-    IEnumerator InitUnlockObject()
-    {
-        yield return new WaitForSeconds(0.5f);
-        unlockController = FindAnyObjectByType<UnlockController>();
+        // Center the two remaining buttons vertically with spacing
+        if (playBtnRect != null)
+            playBtnRect.anchoredPosition = new Vector2(playBtnRect.anchoredPosition.x, 120);
+        if (statsBtnRect != null)
+            statsBtnRect.anchoredPosition = new Vector2(statsBtnRect.anchoredPosition.x, -120);
     }
 
     public void UpdatePurchaseStatus()
     {
         purchaseGame = true;
-        SaveGame.Save<bool>("purchaseGame", purchaseGame);
     }
 
     IEnumerator WaitForTime()
@@ -145,23 +119,9 @@ public class LevelLoader : MonoBehaviour {
 
     public void LoadStats()
     {
-        heptagonController = HeptagonController.Instance;
-        numberOfGamesPlayed = SaveGame.Load<int>("numberOfGamesPlayed");
-        purchaseGame = SaveGame.Load<bool>("purchaseGame");
         currentScene = "Stats Screen Expanded";
-        if (purchaseGame || numberOfGamesPlayed < maxFreeGamesForStats)
-        {
-            Time.timeScale = 1;
-            SceneManager.LoadScene("Stats Screen Expanded");
-        }
-        else
-        {
-            if(heptagonController)
-            {
-                heptagonController.ShowUnlockDialog();
-            }
-        }
-
+        Time.timeScale = 1;
+        SceneManager.LoadScene("Stats Screen Expanded");
     }
 
     public void LoadLevel1()
@@ -175,33 +135,18 @@ public class LevelLoader : MonoBehaviour {
 
     public void LoadSelectedLevel()
     {
-        // Load the default interstitial ad.
-        Advertising.LoadInterstitialAd();
-
-        if (purchaseGame || (purchaseGame == false && selectedLevel <= 8))
+        Debug.Log("LoadSelectedLevel called. selectedLevel=" + selectedLevel + " validSelection=" + (heptagonController != null ? heptagonController.validSelection.ToString() : "null"));
+        if (heptagonController != null && heptagonController.validSelection)
         {
-            if (selectedLevel == 0)
-            {
-                LoadTutorialLevel();
-            }
-
-            if (tutorialPlayed)
-            {
-                if (heptagonController.validSelection)
-                {
-                    LoadLevel1(); //Only one scene is enough since levels are adjusted on the script.
-                }
-            }
-            else
-            {
-                LoadTutorialLevel();
-            }
+            LoadLevel1();
         }
-        else
-        {
-            heptagonController.ShowUnlockDialog();
-        }
+    }
 
+    public void SetSelectedLevel(int selectedLevelMethod)
+    {
+        selectedLevel = selectedLevelMethod;
+        Debug.Log("SetSelectedLevel called with level=" + selectedLevelMethod);
+        SaveGame.Save<int>("selectedLevel", selectedLevel);
     }
 
     public void LoadTutorialLevel()
@@ -211,12 +156,6 @@ public class LevelLoader : MonoBehaviour {
         SaveGame.Save<int>("selectedLevel", selectedLevel);
         SaveGame.Save<bool>("tutorialPlayed", tutorialPlayed);
         LoadLevel1();
-    }
-
-    public void SetSelectedLevel(int selectedLevelMethod)
-    {
-        selectedLevel = selectedLevelMethod;
-        SaveGame.Save<int>("selectedLevel", selectedLevel);
     }
 
     public void LoadSceneSelection()
@@ -241,9 +180,7 @@ public class LevelLoader : MonoBehaviour {
 
     public void LoadOptionsScreen()
     {
-
-        currentScene = "Options Screen";
-        SceneManager.LoadScene("Options Screen");
+        // Options screen removed for AI testbed
     }
 
     public void LoadNextScene()
@@ -253,7 +190,7 @@ public class LevelLoader : MonoBehaviour {
 
     public void QuitGame()
     {
-        Application.Quit();
+        // Does nothing in WebGL
     }
 
 }

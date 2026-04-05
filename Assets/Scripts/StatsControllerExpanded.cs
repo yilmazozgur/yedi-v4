@@ -4,7 +4,7 @@ using UnityEngine;
 using BayatGames.SaveGameFree;
 using ChartUtil.Demo;
 using TMPro;
-using LightShaft.Scripts;
+using Michsky.UI.ModernUIPack;
 
 public class StatsControllerExpanded : MonoBehaviour
 {
@@ -43,8 +43,6 @@ public class StatsControllerExpanded : MonoBehaviour
     TextMeshProUGUI rankingValue;
     TextMeshProUGUI rankingText;
 
-    VideoObject videoObject;
-    YoutubePlayer youtubePlayer;
     MusicPlayer musicPlayer;
 
     public int numberOfGamesPlayed = 0;
@@ -56,8 +54,8 @@ public class StatsControllerExpanded : MonoBehaviour
     float memoryGainAvg = 0;
     float motorGainAvg = 0;
 
-    Dictionary<string, List<float>> statsDictionary = new Dictionary<string, List<float>>();
-    Dictionary<string, float> dataCurrentGame = new Dictionary<string, float>();
+    static Dictionary<string, List<float>> statsDictionary = new Dictionary<string, List<float>>();
+    static Dictionary<string, float> dataCurrentGame = new Dictionary<string, float>();
 
     public List<float> listMean = new List<float>();
     public List<float> listStd = new List<float>();
@@ -114,13 +112,33 @@ public class StatsControllerExpanded : MonoBehaviour
 
         }
 
-        videoObject = FindAnyObjectByType<VideoObject>();
-        if (videoObject != null)
+        // Remove "Mana Stats" tab from the HorizontalSelector — irrelevant for AI testbed
+        HorizontalSelector[] allSelectors = FindObjectsByType<HorizontalSelector>(FindObjectsSortMode.None);
+        foreach (HorizontalSelector sel in allSelectors)
         {
-            youtubePlayer = videoObject.GetComponentInChildren<YoutubePlayer>();
-            videoObject.gameObject.SetActive(false);
+            for (int i = sel.itemList.Count - 1; i >= 0; i--)
+            {
+                if (sel.itemList[i].itemTitle == "Mana Stats")
+                {
+                    sel.itemList.RemoveAt(i);
+                    sel.defaultIndex = 0;
+                    sel.index = 0;
+                    sel.SetupSelector();
+                    break;
+                }
+            }
         }
-        
+
+        VideoObject videoObject = FindAnyObjectByType<VideoObject>();
+        if (videoObject != null) { videoObject.gameObject.SetActive(false); }
+
+        // Hide "Play Video Button" — video playback removed for AI testbed
+        foreach (UnityEngine.UI.Button btn in FindObjectsByType<UnityEngine.UI.Button>(FindObjectsSortMode.None))
+        {
+            if (btn.gameObject.name == "Play Video Button")
+                btn.gameObject.SetActive(false);
+        }
+
         resetDialogCanvas = FindAnyObjectByType<ResetDialogCanvas>();
 
         CurrentPlotShownText currentPlotShownText = FindAnyObjectByType<CurrentPlotShownText>();
@@ -195,36 +213,12 @@ public class StatsControllerExpanded : MonoBehaviour
 
     public void PlayVideo(string videoURL)
     {
-        musicPlayer = MusicPlayer.Instance;
-        if (musicPlayer != null)
-        {
-            musicPlayer.SetVolume(0f);
-        }
-
-        if (videoObject != null)
-        {
-            videoObject.gameObject.SetActive(true);
-            if (youtubePlayer != null)
-            {
-                youtubePlayer.Play(videoURL);
-            }
-        }
-       
-
+        // Video playback removed
     }
 
     public void HideVideo()
     {
-        if (videoObject != null)
-        {
-            videoObject.gameObject.SetActive(false);
-        }
- 
-        musicPlayer = MusicPlayer.Instance;
-        if (musicPlayer != null)
-        {
-            musicPlayer.SetVolume(PlayerPrefsController.GetMasterVolume());
-        }
+        // Video playback removed
     }
 
     public float GetAvgGeneric()
@@ -362,9 +356,61 @@ public class StatsControllerExpanded : MonoBehaviour
 
     private void LoadSavedStats()
     {
+        // If the static dictionary already has chart data keys, it was populated
+        // during gameplay this session — don't overwrite with stale async SaveGame data.
+        if (statsDictionary.ContainsKey("Mana"))
+        {
+            Debug.Log("LoadSavedStats: using in-memory static statsDictionary (already populated)");
+            // Still ensure MeanGross/StdGross exist
+            if (!statsDictionary.ContainsKey("MeanGross"))
+            {
+                PrepareMeanAndStd();
+                statsDictionary.Add("MeanGross", listMean);
+                statsDictionary.Add("StdGross", listStd);
+            }
+            return;
+        }
+
+        // Try loading from server first (survives server restarts / page reloads)
+        var serverData = StatsSyncBridge.LoadFromServer();
+        if (serverData != null && serverData.Count > 0)
+        {
+            Debug.Log("LoadSavedStats: loaded from server (" + serverData.Count + " keys)");
+            statsDictionary = serverData;
+            foreach (string lineChartName in chartLineTypes)
+            {
+                if (!statsDictionary.ContainsKey(lineChartName))
+                    statsDictionary.Add(lineChartName, new List<float>());
+            }
+            if (!statsDictionary.ContainsKey("MeanGross"))
+            {
+                PrepareMeanAndStd();
+                statsDictionary.Add("MeanGross", listMean);
+                statsDictionary.Add("StdGross", listStd);
+            }
+            return;
+        }
+
+        // Fallback to IndexedDB (SaveGame)
         if (SaveGame.Exists("statsDictionary"))
         {
             statsDictionary = SaveGame.Load<Dictionary<string, List<float>>>("statsDictionary");
+            if (statsDictionary == null)
+            {
+                FlushStatsDictionary();
+                return;
+            }
+            foreach (string lineChartName in chartLineTypes)
+            {
+                if (!statsDictionary.ContainsKey(lineChartName))
+                    statsDictionary.Add(lineChartName, new List<float>());
+            }
+            if (!statsDictionary.ContainsKey("MeanGross"))
+            {
+                PrepareMeanAndStd();
+                statsDictionary.Add("MeanGross", listMean);
+                statsDictionary.Add("StdGross", listStd);
+            }
         }
         else
         {
@@ -392,16 +438,19 @@ public class StatsControllerExpanded : MonoBehaviour
 
     public void SaveGameStats()
     {
+        int savedCount = 0;
         foreach (string lineChartName in chartLineTypes)
         {
             if(dataCurrentGame[lineChartName] != -1000f)
             {
                 statsDictionary[lineChartName].Add(dataCurrentGame[lineChartName]);
+                savedCount++;
             }
         }
 
+        Debug.Log("SaveGameStats: saved " + savedCount + " metrics. Games recorded=" + statsDictionary["Math"].Count);
         SaveGame.Save<Dictionary<string, List<float>>>("statsDictionary", statsDictionary);
-
+        StatsSyncBridge.SaveToServer(statsDictionary);
     }
 
     public void FlushCurrentGameData()
@@ -691,6 +740,7 @@ public class StatsControllerExpanded : MonoBehaviour
     public void ResetAllStats()
     {
         SaveGame.Delete("statsDictionary");
+        StatsSyncBridge.DeleteOnServer();
         numberOfGamesPlayed = 0;
         HideResetDialog();
         FlushStatsDictionary();
@@ -713,17 +763,7 @@ public class StatsControllerExpanded : MonoBehaviour
 
     public void ShowNextLinePlot()
     {
-        //Mana group
-        if (currentPlotShown == "Mana")
-        {
-            ShowLinePlot("Mana Speed");
-            return;
-        }
-        if (currentPlotShown == "Mana Speed")
-        {
-            ShowLinePlot("Mana");
-            return;
-        }
+        // Mana group skipped — irrelevant for AI testbed
 
         //Math group
         if (currentPlotShown == "Math")
@@ -966,17 +1006,7 @@ public class StatsControllerExpanded : MonoBehaviour
 
     public void ShowPreviousLinePlot()
     {
-        //Mana group
-        if (currentPlotShown == "Mana Speed")
-        {
-            ShowLinePlot("Mana");
-            return;
-        }
-        if (currentPlotShown == "Mana")
-        {
-            ShowLinePlot("Mana Speed");
-            return;
-        }
+        // Mana group skipped — irrelevant for AI testbed
 
         //Math Group
         if (currentPlotShown == "Math: Sort")

@@ -114,8 +114,13 @@ public class StatsCollectorExpanded : MonoBehaviour
         stdGeneric = statsControllerExpanded.GetStdGeneric();
         PrepareMeanAndStd();
         levelController = LevelController.Instance;
-        gameResultManaText = FindAnyObjectByType<GameResultMana>().GetComponent<Text>();
-        gameResultManaSpeedText = FindAnyObjectByType<GameResultManaSpeed>().GetComponent<Text>();
+        // Hide Mana stats — irrelevant for AI testbed (total points don't matter, individual skills do)
+        GameResultMana gameResultMana = FindAnyObjectByType<GameResultMana>();
+        if (gameResultMana != null) gameResultMana.gameObject.SetActive(false);
+        GameResultManaSpeed gameResultManaSpeed = FindAnyObjectByType<GameResultManaSpeed>();
+        if (gameResultManaSpeed != null) gameResultManaSpeed.gameObject.SetActive(false);
+        gameResultManaText = null;
+        gameResultManaSpeedText = null;
         gameResultMathText = FindAnyObjectByType<GameResultMath>().GetComponent<Text>();
         gameResultColorText = FindAnyObjectByType<GameResultColor>().GetComponent<Text>();
         gameResultSpatialText = FindAnyObjectByType<GameResultSpatial>().GetComponent<Text>();

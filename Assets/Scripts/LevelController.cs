@@ -69,6 +69,13 @@ public class LevelController : MonoBehaviour {
 
     private void Start()
     {
+        // Auto-fit camera to show full game area regardless of aspect ratio
+        Camera mainCam = Camera.main;
+        if (mainCam != null && mainCam.GetComponent<CameraAutoFit>() == null)
+        {
+            mainCam.gameObject.AddComponent<CameraAutoFit>();
+        }
+
         SaveGame.Save<int>("numberOfRewardedAdsWatched", 0);
         gamePaused = false;
         SaveGame.Save<bool>("gamePaused", false);
@@ -105,7 +112,8 @@ public class LevelController : MonoBehaviour {
         gameTimer = GameTimer.Instance;
         statsCollectorExpanded = StatsCollectorExpanded.Instance;
 
-        selectedLevel = SaveGame.Load<int>("selectedLevel");
+        selectedLevel = LevelLoader.selectedLevel;
+        Debug.Log("LevelController: selectedLevel = " + selectedLevel);
         BuyCardButton[] buyCardButtonList = FindObjectsByType<BuyCardButton>(FindObjectsSortMode.None);
         foreach (BuyCardButton cardButton in buyCardButtonList)
         {
@@ -173,17 +181,26 @@ public class LevelController : MonoBehaviour {
 
     private void LoadModes()
     {
-        modeNumber = SaveGame.Load<string>("modeNumber");
-        modeColor = SaveGame.Load<string>("modeColor");
-        modeShape = SaveGame.Load<string>("modeShape");
-        modeWord = SaveGame.Load<string>("modeWord");
-        modeBeat = SaveGame.Load<string>("modeBeat");
-        modeMemory = SaveGame.Load<string>("modeMemory");
-        modeMotor = SaveGame.Load<string>("modeMotor");
+        modeNumber = HeptagonController.modeNumber;
+        modeColor = HeptagonController.modeColor;
+        modeShape = HeptagonController.modeShape;
+        modeWord = HeptagonController.modeWord;
+        modeBeat = HeptagonController.modeBeat;
+        modeMemory = HeptagonController.modeMemory;
+        modeMotor = HeptagonController.modeMotor;
     }
 
     private void SaveModes()
     {
+        // Sync back to static fields so HeptagonShowHelp() sees correct modes
+        HeptagonController.modeNumber = modeNumber;
+        HeptagonController.modeColor = modeColor;
+        HeptagonController.modeShape = modeShape;
+        HeptagonController.modeWord = modeWord;
+        HeptagonController.modeBeat = modeBeat;
+        HeptagonController.modeMemory = modeMemory;
+        HeptagonController.modeMotor = modeMotor;
+
         SaveGame.Save<string>("modeNumber", modeNumber);
         SaveGame.Save<string>("modeColor", modeColor);
         SaveGame.Save<string>("modeShape", modeShape);
@@ -239,12 +256,13 @@ public class LevelController : MonoBehaviour {
             modeMemory = null;
             modeMotor = null;
 
-            tutorial.gameObject.SetActive(true);
-            tutorialController = TutorialController.Instance;
-            if(tutorialController)
-            {
-                tutorialController.InitiateTutorial();
-            }
+            // Tutorial disabled for AI testbed
+            // tutorial.gameObject.SetActive(true);
+            // tutorialController = TutorialController.Instance;
+            // if(tutorialController)
+            // {
+            //     tutorialController.InitiateTutorial();
+            // }
             
         }
         else if (selectedLevel == 1) //Only number, add
@@ -942,27 +960,14 @@ public class LevelController : MonoBehaviour {
     public void PauseGame()
     {
         gameTimer = GameTimer.Instance;
-        numberOfRewardedAdsWatched = SaveGame.Load<int>("numberOfRewardedAdsWatched");
-        gamePaused = SaveGame.Load<bool>("gamePaused");
-        //Debug.Log(gamePaused);
+        // Use fields directly instead of SaveGame.Load (async race condition in WebGL)
 
-        if (gameTimer.ReturnTimerFinished() == true && numberOfRewardedAdsWatched < 2)
-        {
-            //Debug.Log("Game finished");
-            adsControllerYedi = AdsControllerYedi.Instance;
-            if (adsControllerYedi != null)
-            {
-                gamePaused = true;
-                SaveGame.Save<bool>("gamePaused", true);
-                adsControllerYedi.ShowRewardedAd();
-            }
-            return;
-        }
-        if (gameTimer.ReturnTimerFinished() == true && numberOfRewardedAdsWatched >= 2)
+        // If the game timer has finished, go back to scene selection
+        if (gameTimer.ReturnTimerFinished() == true)
         {
             BackButtonPressed();
+            return;
         }
-
 
         if (gamePaused == false)
         {
@@ -1031,12 +1036,7 @@ public class LevelController : MonoBehaviour {
 
     public void ShowHelp()
     {
-        //gameTimer = GameTimer.Instance;
-        //if (gameTimer.ReturnTimerFinished() == true)
-        //{
-        //    return;
-        //}
-        gamePaused = SaveGame.Load<bool>("gamePaused");
+        // Use field directly instead of SaveGame.Load (async race condition in WebGL)
         if (gamePaused == false)
         {
             gameTimer = GameTimer.Instance;
@@ -1098,12 +1098,25 @@ public class LevelController : MonoBehaviour {
 
     public void LevelTimerFinished()
     {
+        if (levelTimerFinished) return; // Already handled — prevent repeated calls
+
         levelTimerFinished = true;
         SaveGame.Save<bool>("levelTimerFinished", true);
         gameFinished = gameTimer.ReturnTimerFinished();
-        StartCoroutine(ShowWinLabel());
-        //DestroyGame();
+        gameTimer.gamePaused = true; // Stop the timer from ticking
+        gameTimer.triggeredLevelFinished = true;
 
+        // Save stats immediately when game finishes
+        statsControllerExpanded = StatsControllerExpanded.Instance;
+        if (statsControllerExpanded != null)
+            statsControllerExpanded.SaveGameStats();
+
+        // Hide Continue button — game is over, only Back makes sense
+        continueButton = ContinueButton.Instance;
+        if (continueButton != null)
+            continueButton.gameObject.SetActive(false);
+
+        StartCoroutine(ShowWinLabel());
     }
 
     IEnumerator ShowWinLabel()
@@ -1130,17 +1143,11 @@ public class LevelController : MonoBehaviour {
 
     void DestroyGame()
     {
-        levelTimerFinished = SaveGame.Load<bool>("levelTimerFinished");
-        //yield return new WaitForSeconds(waitToLoad);
-        Debug.Log(levelTimerFinished);
-        statsControllerExpanded = StatsControllerExpanded.Instance;
+        // Stats are saved in LevelTimerFinished() when the game ends normally.
+        // No need to save again here — avoids double-counting.
+        Debug.Log("DestroyGame: levelTimerFinished=" + levelTimerFinished);
         beatGenerator = BeatGenerator.Instance;
-        if (levelTimerFinished == true)
-        {
-            Debug.Log("Stats saved.");
-            statsControllerExpanded.SaveGameStats();
-        }
-        
+
         Destroy(cardDrawer);
         
         beatGenerator.StopBeat();

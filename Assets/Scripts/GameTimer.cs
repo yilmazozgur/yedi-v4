@@ -33,7 +33,7 @@ public class GameTimer : MonoBehaviour {
     public void SetTime()
     {
         doubleTime = SaveGame.Load<bool>("doubleTime");
-        levelTime = 10; //84, 105
+        levelTime = 120;
         if (doubleTime == true)
         {
             levelTime = levelTime * 2f;
