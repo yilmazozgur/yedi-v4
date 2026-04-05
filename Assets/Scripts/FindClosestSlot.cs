@@ -45,6 +45,10 @@ public class FindClosestSlot : MonoBehaviour
         {
 			slotSell = FindAnyObjectByType<SlotSell>();
 		}
+		if(allSlots == null)
+		{
+			allSlots = FindObjectsByType<SlotGeneric>(FindObjectsSortMode.None);
+		}
 
 		distanceToAnchor = (slotSell.transform.position - this.transform.position).sqrMagnitude;
 		if(distanceToAnchor < minDistanceAnchor)
