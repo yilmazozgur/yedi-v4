@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="120"
+   height="180"
+   viewBox="0 0 31.749999 47.625001"
+   version="1.1"
+   id="svg920"
+   inkscape:export-filename="/Users/ozguryilmaz/Desktop/rect_circ_tri.png"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   inkscape:version="1.0.2 (e86c8708, 2021-01-15)"
+   sodipodi:docname="triple.svg">
+  <defs
+     id="defs914" />
+  <sodipodi:namedview
+     id="base"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:pageopacity="0.0"
+     inkscape:pageshadow="2"
+     inkscape:zoom="2.2589829"
+     inkscape:cx="-25.89709"
+     inkscape:cy="88.741825"
+     inkscape:document-units="mm"
+     inkscape:current-layer="layer1"
+     inkscape:document-rotation="0"
+     showgrid="false"
+     units="px"
+     inkscape:window-width="1440"
+     inkscape:window-height="770"
+     inkscape:window-x="0"
+     inkscape:window-y="25"
+     inkscape:window-maximized="0" />
+  <metadata
+     id="metadata917">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title />
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <path
+       sodipodi:type="star"
+       style="fill:none;stroke:#000000;stroke-width:2.9713;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1;stop-color:#000000"
+       id="path920-6"
+       sodipodi:sides="3"
+       sodipodi:cx="16.351179"
+       sodipodi:cy="25.74206"
+       sodipodi:r1="10.68871"
+       sodipodi:r2="5.3443551"
+       sodipodi:arg1="0.51914611"
+       sodipodi:arg2="1.5663437"
+       inkscape:flatsided="true"
+       inkscape:rounded="0"
+       inkscape:randomized="0"
+       inkscape:transform-center-x="-0.020450714"
+       inkscape:transform-center-y="-3.4137699"
+       transform="matrix(0.53375719,0,0,0.84884025,7.3497499,1.8443985)"
+       d="M 25.631578,31.045145 7.1183729,31.127579 16.303586,15.053455 Z" />
+    <ellipse
+       style="fill:none;stroke:#000000;stroke-width:2;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1;stop-color:#000000"
+       id="path942-8"
+       cx="16.074978"
+       cy="22.679928"
+       rx="8.9547501"
+       ry="11.618187" />
+    <g
+       id="g1066"
+       transform="translate(-38.005443,-19.665607)">
+      <rect
+         style="fill:#000000;fill-opacity:1;fill-rule:evenodd;stroke-width:0.15;stroke-miterlimit:4;stroke-dasharray:none"
+         id="rect924-3"
+         width="1.9000001"
+         height="35.203705"
+         x="42.268391"
+         y="25.923008" />
+      <rect
+         style="fill:#000000;fill-opacity:1;fill-rule:evenodd;stroke-width:0.15;stroke-miterlimit:4;stroke-dasharray:none"
+         id="rect924-9-1"
+         width="1.8999976"
+         height="23.519083"
+         x="59.369221"
+         y="-65.712502"
+         transform="matrix(0.00120244,0.99999928,-0.9999943,0.00337627,0,0)" />
+      <rect
+         style="fill:#000000;fill-opacity:1;fill-rule:evenodd;stroke-width:0.15;stroke-miterlimit:4;stroke-dasharray:none"
+         id="rect924-9-8-3"
+         width="1.8999976"
+         height="23.519083"
+         x="24.16563"
+         y="-65.754829"
+         transform="matrix(0.00120244,0.99999928,-0.9999943,0.00337627,0,0)" />
+      <rect
+         style="fill:#000000;fill-opacity:1;fill-rule:evenodd;stroke-width:0.15;stroke-miterlimit:4;stroke-dasharray:none"
+         id="rect924-6-2"
+         width="1.9000001"
+         height="35.203705"
+         x="63.885796"
+         y="25.843601" />
+    </g>
+  </g>
+</svg>
