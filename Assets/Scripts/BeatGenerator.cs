@@ -23,7 +23,7 @@ public class BeatGenerator : MonoBehaviour
 
     void Start()
     {
-        musicPlayer = FindObjectOfType<MusicPlayer>();
+        musicPlayer = FindAnyObjectByType<MusicPlayer>();
         if (beatActivated == true)
         {
             if (musicPlayer != null)
@@ -32,7 +32,7 @@ public class BeatGenerator : MonoBehaviour
             }
         }
 
-        BeatSource[] beats = FindObjectsOfType<BeatSource>();
+        BeatSource[] beats = FindObjectsByType<BeatSource>(FindObjectsSortMode.None);
         foreach (BeatSource beatIter in beats)
         {
             if (beatIter.gameObject.name == "Beat1")

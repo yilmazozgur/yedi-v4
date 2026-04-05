@@ -59,26 +59,26 @@ public class OptionsController : MonoBehaviour {
 
     void Start ()
     {
-        videoObject = FindObjectOfType<VideoObject>();
+        videoObject = FindAnyObjectByType<VideoObject>();
         if (videoObject != null)
         {
             youtubePlayer = videoObject.GetComponentInChildren<YoutubePlayer>();
             videoObject.gameObject.SetActive(false);
         }
-        videoButtonsOptions = FindObjectOfType<VideoButtonsOptions>();
+        videoButtonsOptions = FindAnyObjectByType<VideoButtonsOptions>();
         if(videoButtonsOptions != null)
         {
             videoButtonsOptions.gameObject.SetActive(false);
         }
 
-        musicPlayer = FindObjectOfType<MusicPlayer>();
-        playerNameInputField = FindObjectOfType<OptionsPlayerName>();
+        musicPlayer = FindAnyObjectByType<MusicPlayer>();
+        playerNameInputField = FindAnyObjectByType<OptionsPlayerName>();
         playerName = PlayerPrefsController.GetPlayerName();
         if (playerName == null || playerName == "")
         {
             playerName = defaultPlayerName;
         }
-        FindObjectOfType<OptionsPlayerNameSaved>().GetComponent<Text>().text = playerName;
+        FindAnyObjectByType<OptionsPlayerNameSaved>().GetComponent<Text>().text = playerName;
 
         //CloudServices.Synchronize();
         //playerNameServer = CloudServices.GetString("PlayerName");
@@ -93,7 +93,7 @@ public class OptionsController : MonoBehaviour {
         //    CloudServices.SetString("PlayerName", playerName);
         //}
 
-        optionsVolumeSlider = FindObjectOfType<OptionsVolumeSlider>();
+        optionsVolumeSlider = FindAnyObjectByType<OptionsVolumeSlider>();
         volumeSlider = optionsVolumeSlider.GetComponent<SliderManager>().mainSlider;
         if(PlayerPrefsController.GetMasterVolume() > 0.1f)
         {
@@ -105,7 +105,7 @@ public class OptionsController : MonoBehaviour {
         }
         AdjustVolume();
 
-        optionsDifficultySlider = FindObjectOfType<OptionsDifficultySlider>();
+        optionsDifficultySlider = FindAnyObjectByType<OptionsDifficultySlider>();
         difficultySlider = optionsDifficultySlider.GetComponent<SliderManager>().mainSlider;
         if (PlayerPrefsController.GetDifficulty() >= 0f)
         {
@@ -128,7 +128,7 @@ public class OptionsController : MonoBehaviour {
 
     public void PlayVideo(string videoURL)
     {
-        musicPlayer = FindObjectOfType<MusicPlayer>();
+        musicPlayer = FindAnyObjectByType<MusicPlayer>();
         if (musicPlayer != null)
         {
             musicHalt = true;
@@ -154,7 +154,7 @@ public class OptionsController : MonoBehaviour {
             videoObject.gameObject.SetActive(false);
         }
 
-        musicPlayer = FindObjectOfType<MusicPlayer>();
+        musicPlayer = FindAnyObjectByType<MusicPlayer>();
         if (musicPlayer != null)
         {
             musicHalt = false;
@@ -176,7 +176,7 @@ public class OptionsController : MonoBehaviour {
     public void SetPlayerName()
     {
         playerName = playerNameInputField.GetComponent<TMP_InputField>().text;
-        FindObjectOfType<OptionsPlayerNameSaved>().GetComponent<Text>().text = playerName;
+        FindAnyObjectByType<OptionsPlayerNameSaved>().GetComponent<Text>().text = playerName;
         PlayerPrefsController.SetPlayerName(playerName);
         //CloudServices.SetString("PlayerName", playerName);
 
@@ -199,7 +199,7 @@ public class OptionsController : MonoBehaviour {
         //CloudServices.SetString("PlayerName", playerName);
         SetVolume();
         SetDifficulty();
-        FindObjectOfType<LevelLoader>().LoadMainMenu();
+        FindAnyObjectByType<LevelLoader>().LoadMainMenu();
     }
 
     public void SetDefaults()

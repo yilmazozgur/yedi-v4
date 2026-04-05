@@ -56,9 +56,9 @@ public class DescriptionController : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        gameInfo = FindObjectOfType<GameInfo>();
+        gameInfo = FindAnyObjectByType<GameInfo>();
 
-        mainCanvas = FindObjectOfType<MainCanvas>();
+        mainCanvas = FindAnyObjectByType<MainCanvas>();
 
         FindAllGameDescriptions();
 
@@ -74,7 +74,7 @@ public class DescriptionController : MonoBehaviour
     {
         if(initialized == false)
         {
-            gameDescriptions = FindObjectsOfType<GameDescription>();
+            gameDescriptions = FindObjectsByType<GameDescription>(FindObjectsSortMode.None);
             foreach (GameDescription gameDescription in gameDescriptions)
             {
                 if (gameDescription.gameObject.name == "Game Description Add Number Canvas")

@@ -49,7 +49,7 @@ public class AdsControllerYedi : MonoBehaviour
         {
             Debug.Log("Timer not topped up!");
         }
-        levelController = FindObjectOfType<LevelController>();
+        levelController = FindAnyObjectByType<LevelController>();
         if (levelController != null)
         {
             ChangeLevelController();
@@ -99,9 +99,9 @@ public class AdsControllerYedi : MonoBehaviour
     {
         // Grants the vendor-level consent for AdMob.
         Advertising.GrantDataPrivacyConsent(AdNetwork.AdMob);
-        gameInfo = FindObjectOfType<GameInfo>();
-        gameTimer = FindObjectOfType<GameTimer>();
-        levelController = FindObjectOfType<LevelController>();
+        gameInfo = FindAnyObjectByType<GameInfo>();
+        gameTimer = FindAnyObjectByType<GameTimer>();
+        levelController = FindAnyObjectByType<LevelController>();
 
         // Load the default interstitial ad.
         Advertising.LoadInterstitialAd();

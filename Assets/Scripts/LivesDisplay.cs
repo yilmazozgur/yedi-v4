@@ -34,7 +34,7 @@ public class LivesDisplay : MonoBehaviour {
 
         if (lives <= 0)
         {
-            FindObjectOfType<LevelController>().StopCardDealing();
+            FindAnyObjectByType<LevelController>().StopCardDealing();
         }
     }
 }

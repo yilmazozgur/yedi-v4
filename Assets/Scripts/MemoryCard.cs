@@ -60,8 +60,8 @@ public class MemoryCard : MonoBehaviour
         spriteRendererBG = cardFrameBackground.GetComponent<SpriteRenderer>();
         backgroundColor = spriteRendererBG.color;
         //Debug.Log(spriteRendererBG.sortingOrder);
-        manaDisplay = FindObjectOfType<ManaDisplay>();
-        memoryGenerator = FindObjectOfType<MemoryGenerator>();
+        manaDisplay = FindAnyObjectByType<ManaDisplay>();
+        memoryGenerator = FindAnyObjectByType<MemoryGenerator>();
         manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
         manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
         manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;
@@ -113,7 +113,7 @@ public class MemoryCard : MonoBehaviour
 
     public void ShowAllCardInfo()
     {
-        MemoryCard[] memoryCards = FindObjectsOfType<MemoryCard>();
+        MemoryCard[] memoryCards = FindObjectsByType<MemoryCard>(FindObjectsSortMode.None);
         foreach(MemoryCard memoryCard in memoryCards)
         {
             memoryCard.ShowCardInfo();

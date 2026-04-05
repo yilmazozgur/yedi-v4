@@ -31,8 +31,8 @@ public class ManaDisplay : MonoBehaviour
     void Start()
     {
         baseMana = 200f;
-        levelController = FindObjectOfType<LevelController>();
-        gameTimer = FindObjectOfType<GameTimer>();
+        levelController = FindAnyObjectByType<LevelController>();
+        gameTimer = FindAnyObjectByType<GameTimer>();
         difficulty = 0f;
         //difficulty = PlayerPrefsController.GetDifficulty();
         manaValue = baseMana - difficulty * 50f;
@@ -70,7 +70,7 @@ public class ManaDisplay : MonoBehaviour
         levelTimer = Time.timeSinceLevelLoad;
         UpdateDisplay();
 
-        statsCollectorExpanded = FindObjectOfType<StatsCollectorExpanded>();
+        statsCollectorExpanded = FindAnyObjectByType<StatsCollectorExpanded>();
         //AddMana(0f);
         //statsCollectorExpanded.UpdateMaxManaValue(manaValue);
     }

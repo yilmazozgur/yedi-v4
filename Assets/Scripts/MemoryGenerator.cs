@@ -73,12 +73,12 @@ public class MemoryGenerator : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        cardDrawer = FindObjectOfType<CardDrawer>();
-        slot1Object = FindObjectOfType<Slot1>();
-        slot2Object = FindObjectOfType<Slot2>();
-        slot3Object = FindObjectOfType<Slot3>();
-        slot4Object = FindObjectOfType<Slot4>();
-        slot5Object = FindObjectOfType<Slot5>();
+        cardDrawer = FindAnyObjectByType<CardDrawer>();
+        slot1Object = FindAnyObjectByType<Slot1>();
+        slot2Object = FindAnyObjectByType<Slot2>();
+        slot3Object = FindAnyObjectByType<Slot3>();
+        slot4Object = FindAnyObjectByType<Slot4>();
+        slot5Object = FindAnyObjectByType<Slot5>();
        
     }
 
@@ -147,7 +147,7 @@ public class MemoryGenerator : MonoBehaviour
 
     //public void InitializeSlotCards()
     //{
-    //    slot1Object = FindObjectOfType<Slot1>();
+    //    slot1Object = FindAnyObjectByType<Slot1>();
     //    slot1GenericObject = slot1Object.GetComponent<SlotGeneric>();
     //    transformSlot1 = slot1Object.transform;
         
@@ -160,7 +160,7 @@ public class MemoryGenerator : MonoBehaviour
         
     //    //slot1CardFrameSpriteRenderer = cardFrameSlot1.backgroundSpriteRenderer;
 
-    //    slot2Object = FindObjectOfType<Slot2>();
+    //    slot2Object = FindAnyObjectByType<Slot2>();
     //    slot2GenericObject = slot2Object.GetComponent<SlotGeneric>();
     //    transformSlot2 = slot2Object.transform;
     //    Card newCardSlot2 = Instantiate(cardPrefab, transformSlot2.position, transformSlot2.rotation) as Card;
@@ -171,7 +171,7 @@ public class MemoryGenerator : MonoBehaviour
     //    cardFrameSlot2Json = Newtonsoft.Json.JsonConvert.SerializeObject(cardFrameSlot2);
         
 
-    //    slot3Object = FindObjectOfType<Slot3>();
+    //    slot3Object = FindAnyObjectByType<Slot3>();
     //    slot3GenericObject = slot3Object.GetComponent<SlotGeneric>();
     //    transformSlot3 = slot3Object.transform;
     //    Card newCardSlot3 = Instantiate(cardPrefab, transformSlot3.position, transformSlot3.rotation) as Card;
@@ -182,7 +182,7 @@ public class MemoryGenerator : MonoBehaviour
     //    cardFrameSlot3Json = Newtonsoft.Json.JsonConvert.SerializeObject(cardFrameSlot3);
         
 
-    //    slot4Object = FindObjectOfType<Slot4>();
+    //    slot4Object = FindAnyObjectByType<Slot4>();
     //    slot4GenericObject = slot4Object.GetComponent<SlotGeneric>();
     //    transformSlot4 = slot4Object.transform;
     //    Card newCardSlot4 = Instantiate(cardPrefab, transformSlot4.position, transformSlot4.rotation) as Card;
@@ -193,7 +193,7 @@ public class MemoryGenerator : MonoBehaviour
     //    cardFrameSlot4Json = Newtonsoft.Json.JsonConvert.SerializeObject(cardFrameSlot4);
         
 
-    //    slot5Object = FindObjectOfType<Slot5>();
+    //    slot5Object = FindAnyObjectByType<Slot5>();
     //    slot5GenericObject = slot5Object.GetComponent<SlotGeneric>();
     //    transformSlot5 = slot5Object.transform;
     //    Card newCardSlot5 = Instantiate(cardPrefab, transformSlot5.position, transformSlot5.rotation) as Card;

@@ -17,15 +17,15 @@ public class Card : MonoBehaviour
 
     private void Start()
     {
-        cardDrawer = FindObjectOfType<CardDrawer>();
-        manaDisplay = FindObjectOfType<ManaDisplay>();
+        cardDrawer = FindAnyObjectByType<CardDrawer>();
+        manaDisplay = FindAnyObjectByType<ManaDisplay>();
 
         cardType = cardDrawer.GetCardType();
         cardCost = cardDrawer.GetCardCost();
         //cardType = PlayerPrefs.GetFloat("CardType");
         //cardCost = PlayerPrefs.GetFloat("CardCost");
         cardMana = Mathf.Round(cardCost * manaDisplay.manaReductionMultiplier);
-        levelLoader = FindObjectOfType<LevelLoader>();
+        levelLoader = FindAnyObjectByType<LevelLoader>();
 
         cardFrame = Instantiate(cardFramePrefab, transform.position, transform.rotation) as CardFrame;
         cardFrame.SetCardObject(this);

@@ -103,28 +103,28 @@ public class StatsCollectorExpanded : MonoBehaviour
             }
         }
 
-        statsControllerExpanded = FindObjectOfType<StatsControllerExpanded>();
+        statsControllerExpanded = FindAnyObjectByType<StatsControllerExpanded>();
         avgGeneric = statsControllerExpanded.GetAvgGeneric();
         stdGeneric = statsControllerExpanded.GetStdGeneric();
         PrepareMeanAndStd();
-        levelController = FindObjectOfType<LevelController>();
-        gameResultManaText = FindObjectOfType<GameResultMana>().GetComponent<Text>();
-        gameResultManaSpeedText = FindObjectOfType<GameResultManaSpeed>().GetComponent<Text>();
-        gameResultMathText = FindObjectOfType<GameResultMath>().GetComponent<Text>();
-        gameResultColorText = FindObjectOfType<GameResultColor>().GetComponent<Text>();
-        gameResultSpatialText = FindObjectOfType<GameResultSpatial>().GetComponent<Text>();
-        gameResultVerbalText = FindObjectOfType<GameResultVerbal>().GetComponent<Text>();
-        gameResultMusicText = FindObjectOfType<GameResultMusic>().GetComponent<Text>();
-        gameResultMemoryText = FindObjectOfType<GameResultMemory>().GetComponent<Text>();
-        gameResultMotorText = FindObjectOfType<GameResultMotor>().GetComponent<Text>();
+        levelController = FindAnyObjectByType<LevelController>();
+        gameResultManaText = FindAnyObjectByType<GameResultMana>().GetComponent<Text>();
+        gameResultManaSpeedText = FindAnyObjectByType<GameResultManaSpeed>().GetComponent<Text>();
+        gameResultMathText = FindAnyObjectByType<GameResultMath>().GetComponent<Text>();
+        gameResultColorText = FindAnyObjectByType<GameResultColor>().GetComponent<Text>();
+        gameResultSpatialText = FindAnyObjectByType<GameResultSpatial>().GetComponent<Text>();
+        gameResultVerbalText = FindAnyObjectByType<GameResultVerbal>().GetComponent<Text>();
+        gameResultMusicText = FindAnyObjectByType<GameResultMusic>().GetComponent<Text>();
+        gameResultMemoryText = FindAnyObjectByType<GameResultMemory>().GetComponent<Text>();
+        gameResultMotorText = FindAnyObjectByType<GameResultMotor>().GetComponent<Text>();
 
-        gameResultTitleTextMath = FindObjectOfType<GameResultMath>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
-        gameResultTitleTextColor = FindObjectOfType<GameResultColor>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
-        gameResultTitleTextSpatial = FindObjectOfType<GameResultSpatial>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
-        gameResultTitleTextVerbal = FindObjectOfType<GameResultVerbal>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
-        gameResultTitleTextMusic = FindObjectOfType<GameResultMusic>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
-        gameResultTitleTextMemory = FindObjectOfType<GameResultMemory>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
-        gameResultTitleTextMotor = FindObjectOfType<GameResultMotor>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
+        gameResultTitleTextMath = FindAnyObjectByType<GameResultMath>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
+        gameResultTitleTextColor = FindAnyObjectByType<GameResultColor>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
+        gameResultTitleTextSpatial = FindAnyObjectByType<GameResultSpatial>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
+        gameResultTitleTextVerbal = FindAnyObjectByType<GameResultVerbal>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
+        gameResultTitleTextMusic = FindAnyObjectByType<GameResultMusic>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
+        gameResultTitleTextMemory = FindAnyObjectByType<GameResultMemory>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
+        gameResultTitleTextMotor = FindAnyObjectByType<GameResultMotor>().GetComponentInParent<GameResultTitle>().GetComponent<Text>();
 
         colorMathValueText = gameResultMathText.color;
         gameResultMathText.text = "---";
@@ -437,7 +437,7 @@ public class StatsCollectorExpanded : MonoBehaviour
             }
         }
 
-        statsControllerExpanded = FindObjectOfType<StatsControllerExpanded>();
+        statsControllerExpanded = FindAnyObjectByType<StatsControllerExpanded>();
         statsControllerExpanded.FlushCurrentGameData();
     }
 

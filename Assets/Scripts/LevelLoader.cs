@@ -37,7 +37,7 @@ public class LevelLoader : MonoBehaviour {
             //Load last scene
             purchaseGame = SaveGame.Load<bool>("purchaseGame");
             tutorialPlayed = SaveGame.Load<bool>("tutorialPlayed");
-            heptagonController = FindObjectOfType<HeptagonController>();
+            heptagonController = FindAnyObjectByType<HeptagonController>();
 
             string lastScene = SaveGame.Load<string>("currentScene");
 
@@ -93,7 +93,7 @@ public class LevelLoader : MonoBehaviour {
         // Grants the vendor-level consent for AdMob.
         Advertising.GrantDataPrivacyConsent(AdNetwork.AdMob);
 
-        heptagonController = FindObjectOfType<HeptagonController>();
+        heptagonController = FindAnyObjectByType<HeptagonController>();
         currentSceneIndex = SceneManager.GetActiveScene().buildIndex;
 
         //!!! ONLY FOR DEBUG PURPOSES, UNLOCKED !!!
@@ -116,7 +116,7 @@ public class LevelLoader : MonoBehaviour {
 
         if (purchaseGame == true)
         {
-            unlockButton = FindObjectOfType<UnlockButton>();
+            unlockButton = FindAnyObjectByType<UnlockButton>();
             if(unlockButton != null)
             {
                 unlockButton.gameObject.SetActive(false);
@@ -125,7 +125,7 @@ public class LevelLoader : MonoBehaviour {
         else
         { //Check whether purchased before
             
-            unlockController = FindObjectOfType<UnlockController>();
+            unlockController = FindAnyObjectByType<UnlockController>();
             if(unlockController == null)
             {
                 StartCoroutine(InitUnlockObject());
@@ -147,7 +147,7 @@ public class LevelLoader : MonoBehaviour {
     IEnumerator InitUnlockObject()
     {
         yield return new WaitForSeconds(0.5f);
-        unlockController = FindObjectOfType<UnlockController>();
+        unlockController = FindAnyObjectByType<UnlockController>();
     }
 
     public void UpdatePurchaseStatus()
@@ -178,7 +178,7 @@ public class LevelLoader : MonoBehaviour {
 
     public void LoadStats()
     {
-        heptagonController = FindObjectOfType<HeptagonController>();
+        heptagonController = FindAnyObjectByType<HeptagonController>();
         numberOfGamesPlayed = SaveGame.Load<int>("numberOfGamesPlayed");
         purchaseGame = SaveGame.Load<bool>("purchaseGame");
         currentScene = "Stats Screen Expanded";

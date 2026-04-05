@@ -38,8 +38,8 @@ public class MotorCard : MonoBehaviour
             }
         }
 
-        manaDisplay = FindObjectOfType<ManaDisplay>();
-        motorGenerator = FindObjectOfType<MotorGenerator>();
+        manaDisplay = FindAnyObjectByType<ManaDisplay>();
+        motorGenerator = FindAnyObjectByType<MotorGenerator>();
         manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
         manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
         manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;

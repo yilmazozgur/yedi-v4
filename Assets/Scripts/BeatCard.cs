@@ -37,8 +37,8 @@ public class BeatCard : MonoBehaviour
             }
         }
         
-        manaDisplay = FindObjectOfType<ManaDisplay>();
-        beatGenerator = FindObjectOfType<BeatGenerator>();
+        manaDisplay = FindAnyObjectByType<ManaDisplay>();
+        beatGenerator = FindAnyObjectByType<BeatGenerator>();
         manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
         manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
         manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;

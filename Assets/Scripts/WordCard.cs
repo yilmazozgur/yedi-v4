@@ -54,9 +54,9 @@ public class WordCard : MonoBehaviour
 
     void Start()
     {
-        levelController = FindObjectOfType<LevelController>();
+        levelController = FindAnyObjectByType<LevelController>();
         activated = false;
-        manaDisplay = FindObjectOfType<ManaDisplay>();
+        manaDisplay = FindAnyObjectByType<ManaDisplay>();
         manaReductionMultiplier = manaDisplay.manaReductionMultiplier;
         manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
         manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;

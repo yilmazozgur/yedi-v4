@@ -94,9 +94,9 @@ public class SevenMinuteController : MonoBehaviour
     public void LoadNextGame()
     {
 
-        workoutProgressBar = FindObjectOfType<WorkoutProgressBar>();
-        workoutNextGameName = FindObjectOfType<WorkoutNextGameName>();
-        heptagonController = FindObjectOfType<HeptagonController>();
+        workoutProgressBar = FindAnyObjectByType<WorkoutProgressBar>();
+        workoutNextGameName = FindAnyObjectByType<WorkoutNextGameName>();
+        heptagonController = FindAnyObjectByType<HeptagonController>();
         textNextGame = workoutNextGameName.GetComponent<Text>();
 
         if (SaveGame.Exists("workoutInitialized"))
@@ -143,7 +143,7 @@ public class SevenMinuteController : MonoBehaviour
     {
         percentPlayed = 100f * (currentGameIndex / 5f);
         yield return new WaitForSeconds(0.2f);
-        workoutProgressBar = FindObjectOfType<WorkoutProgressBar>();
+        workoutProgressBar = FindAnyObjectByType<WorkoutProgressBar>();
         workoutProgressBar.AdjustSlider(percentPlayed, justInitialized);
 
     }

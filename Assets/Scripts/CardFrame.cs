@@ -110,9 +110,9 @@ public class CardFrame : MonoBehaviour
         //cardType = PlayerPrefs.GetFloat("CardType");
         backgroundSpriteRenderer = GetComponentInChildren<CardFrameBackground>().GetComponent<SpriteRenderer>();
         //audioCardPlaceOnSlot = GetComponentInChildren<AudioSource>();
-        manaDisplay = FindObjectOfType<ManaDisplay>();
+        manaDisplay = FindAnyObjectByType<ManaDisplay>();
         maxNumberOfMerges = manaDisplay.maxNumberOfMerges;
-        cardDrawer = FindObjectOfType<CardDrawer>();
+        cardDrawer = FindAnyObjectByType<CardDrawer>();
         cardSuper = cardDrawer.GetSuperCard();
         numberCard = GetNumberCard();
         colorCard = GetColorCard();
@@ -150,8 +150,8 @@ public class CardFrame : MonoBehaviour
         motorGainSpriteRenderer = motorGainSprite.GetComponent<SpriteRenderer>();
         motorGainSpriteRenderer.enabled = false;
 
-        statsCollectorExpanded = FindObjectOfType<StatsCollectorExpanded>();
-        tutorialController = FindObjectOfType<TutorialController>();
+        statsCollectorExpanded = FindAnyObjectByType<StatsCollectorExpanded>();
+        tutorialController = FindAnyObjectByType<TutorialController>();
     }
 
 
@@ -359,7 +359,7 @@ public class CardFrame : MonoBehaviour
                     if (closestSlot != currentSlot && slotNewTest == null && slotSellTest == null)
                     {
                         closestSlot.GetComponent<SpriteRenderer>().color = Color.black;
-                        SlotGeneric[] slotGenericList = FindObjectsOfType<SlotGeneric>();
+                        SlotGeneric[] slotGenericList = FindObjectsByType<SlotGeneric>(FindObjectsSortMode.None);
                         foreach (SlotGeneric slotGeneric in slotGenericList)
                         {
                             if (slotGeneric != closestSlot)

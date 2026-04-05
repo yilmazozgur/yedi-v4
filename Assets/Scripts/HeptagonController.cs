@@ -121,11 +121,11 @@ public class HeptagonController : MonoBehaviour
     void Start()
     {
        
-        heptagonCanvas = FindObjectOfType<HeptagonCanvas>();
+        heptagonCanvas = FindAnyObjectByType<HeptagonCanvas>();
         
-        levelLoader = FindObjectOfType<LevelLoader>();
+        levelLoader = FindAnyObjectByType<LevelLoader>();
 
-        videoObject = FindObjectOfType<VideoObject>();
+        videoObject = FindAnyObjectByType<VideoObject>();
         if(videoObject != null)
         {
             youtubePlayer = videoObject.GetComponentInChildren<YoutubePlayer>();
@@ -134,31 +134,31 @@ public class HeptagonController : MonoBehaviour
         
 
 
-        unlockDialogCanvas = FindObjectOfType<UnlockDialogCanvas>();
+        unlockDialogCanvas = FindAnyObjectByType<UnlockDialogCanvas>();
         if (unlockDialogCanvas)
         {
             unlockDialogCanvas.gameObject.SetActive(false);
         }
 
-        purchasedDialogCanvas = FindObjectOfType<PurchasedDialogCanvas>();
+        purchasedDialogCanvas = FindAnyObjectByType<PurchasedDialogCanvas>();
         if (purchasedDialogCanvas)
         {
             purchasedDialogCanvas.gameObject.SetActive(false);
         }
 
-        mainCanvas = FindObjectOfType<MainCanvas>();
+        mainCanvas = FindAnyObjectByType<MainCanvas>();
         if (mainCanvas != null)
         {
             FindAllHeptagonItems();
             heptagonCanvas.gameObject.SetActive(false);
         }
 
-        gameDescriptionCanvas = FindObjectOfType<GameDescriptionCanvas>();
+        gameDescriptionCanvas = FindAnyObjectByType<GameDescriptionCanvas>();
     }
 
     public void PlayVideo(string videoURL)
     {
-        musicPlayer = FindObjectOfType<MusicPlayer>();
+        musicPlayer = FindAnyObjectByType<MusicPlayer>();
         if (musicPlayer != null)
         {
             musicPlayer.SetVolume(0f);
@@ -182,7 +182,7 @@ public class HeptagonController : MonoBehaviour
             videoObject.gameObject.SetActive(false);
         }
 
-        musicPlayer = FindObjectOfType<MusicPlayer>();
+        musicPlayer = FindAnyObjectByType<MusicPlayer>();
         if (musicPlayer != null)
         {
             musicPlayer.SetVolume(PlayerPrefsController.GetMasterVolume());
@@ -191,8 +191,8 @@ public class HeptagonController : MonoBehaviour
 
     private void FindAllHeptagonItems()
     {
-        descriptionController = FindObjectOfType<DescriptionController>();
-        heptagonItems = FindObjectsOfType<HeptagonItem>();
+        descriptionController = FindAnyObjectByType<DescriptionController>();
+        heptagonItems = FindObjectsByType<HeptagonItem>(FindObjectsSortMode.None);
         foreach (HeptagonItem heptagonItem in heptagonItems)
         {
             //heptagonItem.gameObject.SetActive(false);
@@ -991,7 +991,7 @@ public class HeptagonController : MonoBehaviour
     public void HeptagonHideHelp()
     {
         FindAllHeptagonItems();
-        //heptagonCanvas = FindObjectOfType<HeptagonCanvas>();
+        //heptagonCanvas = FindAnyObjectByType<HeptagonCanvas>();
         heptagonCanvas.gameObject.SetActive(false);
         gameDescriptionCanvas.gameObject.SetActive(false);
         //descriptionController.HideDescriptions();

@@ -107,28 +107,28 @@ public class StatsControllerExpanded : MonoBehaviour
 
         }
 
-        videoObject = FindObjectOfType<VideoObject>();
+        videoObject = FindAnyObjectByType<VideoObject>();
         if (videoObject != null)
         {
             youtubePlayer = videoObject.GetComponentInChildren<YoutubePlayer>();
             videoObject.gameObject.SetActive(false);
         }
         
-        resetDialogCanvas = FindObjectOfType<ResetDialogCanvas>();
+        resetDialogCanvas = FindAnyObjectByType<ResetDialogCanvas>();
 
-        CurrentPlotShownText currentPlotShownText = FindObjectOfType<CurrentPlotShownText>();
+        CurrentPlotShownText currentPlotShownText = FindAnyObjectByType<CurrentPlotShownText>();
         if(currentPlotShownText != null)
         {
             textCurrentPlotShown = currentPlotShownText.GetComponent<TextMeshProUGUI>();
         }
 
-        RankingValueStats rankingValueStats = FindObjectOfType<RankingValueStats>();
+        RankingValueStats rankingValueStats = FindAnyObjectByType<RankingValueStats>();
         if(rankingValueStats != null)
         {
             rankingValue = rankingValueStats.GetComponent<TextMeshProUGUI>();
         }
 
-        TextMeshProUGUI[] textUIs = FindObjectsOfType<TextMeshProUGUI>();
+        TextMeshProUGUI[] textUIs = FindObjectsByType<TextMeshProUGUI>(FindObjectsSortMode.None);
         foreach(TextMeshProUGUI itemIter in textUIs)
         {
             if(itemIter.gameObject.name == "Next Button")
@@ -154,7 +154,7 @@ public class StatsControllerExpanded : MonoBehaviour
         LoadSavedStats();
 
         // Graph/Chart Init
-        ChartUtil.Chart[] chartsAll = FindObjectsOfType<ChartUtil.Chart>();
+        ChartUtil.Chart[] chartsAll = FindObjectsByType<ChartUtil.Chart>(FindObjectsSortMode.None);
         foreach (ChartUtil.Chart chartIter in chartsAll)
         {
             if (chartIter.gameObject.name == "Chart Line")
@@ -188,7 +188,7 @@ public class StatsControllerExpanded : MonoBehaviour
 
     public void PlayVideo(string videoURL)
     {
-        musicPlayer = FindObjectOfType<MusicPlayer>();
+        musicPlayer = FindAnyObjectByType<MusicPlayer>();
         if (musicPlayer != null)
         {
             musicPlayer.SetVolume(0f);
@@ -213,7 +213,7 @@ public class StatsControllerExpanded : MonoBehaviour
             videoObject.gameObject.SetActive(false);
         }
  
-        musicPlayer = FindObjectOfType<MusicPlayer>();
+        musicPlayer = FindAnyObjectByType<MusicPlayer>();
         if (musicPlayer != null)
         {
             musicPlayer.SetVolume(PlayerPrefsController.GetMasterVolume());

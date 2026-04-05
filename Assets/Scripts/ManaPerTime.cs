@@ -14,9 +14,9 @@ public class ManaPerTime : MonoBehaviour
     void Start()
     {
         manaPerTimeText = GetComponent<Text>();
-        manaDisplay = FindObjectOfType<ManaDisplay>();
+        manaDisplay = FindAnyObjectByType<ManaDisplay>();
         manaPerTimevalue = 0;
-        levelController = FindObjectOfType<LevelController>();
+        levelController = FindAnyObjectByType<LevelController>();
         UpdateDisplay();
     }
 

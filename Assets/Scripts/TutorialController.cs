@@ -45,7 +45,7 @@ public class TutorialController : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        levelLoader = FindObjectOfType<LevelLoader>();
+        levelLoader = FindAnyObjectByType<LevelLoader>();
         DeactivateAllTutorialPopups();
     }
 
@@ -179,7 +179,7 @@ public class TutorialController : MonoBehaviour
 
     public void DeactivateAllTutorialPopups()
     {
-        tutorialPopups = FindObjectsOfType<TutorialPopup>();
+        tutorialPopups = FindObjectsByType<TutorialPopup>(FindObjectsSortMode.None);
         foreach (TutorialPopup tutorialPopup in tutorialPopups)
         {
             if (tutorialPopup.gameObject.name == "Tutorial Buy Card")
@@ -269,7 +269,7 @@ public class TutorialController : MonoBehaviour
 
     public void SkipTutorial()
     {
-        levelLoader = FindObjectOfType<LevelLoader>();
+        levelLoader = FindAnyObjectByType<LevelLoader>();
         levelLoader.LoadSceneSelection();
         SaveGame.Save<bool>("tutorialPlayed", true);
     }

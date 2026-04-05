@@ -19,7 +19,7 @@ public class GameTimer : MonoBehaviour {
     {
         SetTime();
         timeSlider = GetComponent<Slider>();
-        levelController = FindObjectOfType<LevelController>();
+        levelController = FindAnyObjectByType<LevelController>();
         timePreviousFrame = Time.timeSinceLevelLoad;
     }
 

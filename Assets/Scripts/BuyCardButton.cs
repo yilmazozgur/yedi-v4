@@ -34,8 +34,8 @@ public class BuyCardButton : MonoBehaviour
         matCard = GetComponent<SpriteRenderer>().material;
         particleVFX = GetComponentInChildren<ParticleSystem>();
         audioCardDraw = GetComponentInChildren<AudioSource>();
-        cardDrawer = FindObjectOfType<CardDrawer>();
-        manaDisplay = FindObjectOfType<ManaDisplay>();
+        cardDrawer = FindAnyObjectByType<CardDrawer>();
+        manaDisplay = FindAnyObjectByType<ManaDisplay>();
         currentCardType = cardDrawer.GetCardType();
         costText = GetComponentInChildren<Text>();
 
@@ -245,7 +245,7 @@ public class BuyCardButton : MonoBehaviour
 
     private void DisableAllButtons()
     {
-        var buttons = FindObjectsOfType<BuyCardButton>();
+        var buttons = FindObjectsByType<BuyCardButton>(FindObjectsSortMode.None);
         foreach (BuyCardButton button in buttons)
         {
             button.GetComponent<SpriteRenderer>().color = new Color32(82, 82, 82, 0);

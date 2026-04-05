@@ -96,7 +96,7 @@
 
 //    void Start()
 //    {
-//        resetDialogCanvas = FindObjectOfType<ResetDialogCanvas>();
+//        resetDialogCanvas = FindAnyObjectByType<ResetDialogCanvas>();
 //        if(resetDialogCanvas)
 //        {
 //            resetDialogCanvas.gameObject.SetActive(false);
@@ -156,7 +156,7 @@
 //        }
 
 //        // Graph/Chart Init
-//        ChartUtil.Chart[] chartsAll = FindObjectsOfType<ChartUtil.Chart>();
+//        ChartUtil.Chart[] chartsAll = FindObjectsByType<ChartUtil.Chart>(FindObjectsSortMode.None);
 //        foreach(ChartUtil.Chart chartIter in chartsAll)
 //        {
 //            if (chartIter.gameObject.name == "Chart Line")

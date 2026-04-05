@@ -25,10 +25,10 @@ public class CardDrawer : MonoBehaviour
     private void Start()
     {
         //CreateDoubleTapGesture();
-        levelController = FindObjectOfType<LevelController>();
-        tutorialController = FindObjectOfType<TutorialController>();
-        manaDisplay = FindObjectOfType<ManaDisplay>();
-        superDisplay = FindObjectOfType<SuperDisplay>();
+        levelController = FindAnyObjectByType<LevelController>();
+        tutorialController = FindAnyObjectByType<TutorialController>();
+        manaDisplay = FindAnyObjectByType<ManaDisplay>();
+        superDisplay = FindAnyObjectByType<SuperDisplay>();
         cardType = -1f;
     }
 
@@ -65,7 +65,7 @@ public class CardDrawer : MonoBehaviour
                 levelController.WorkoutGameUsedUp();
             }
             firstCardDrawn = true;
-            SlotNew slotNewObject = FindObjectOfType<SlotNew>();
+            SlotNew slotNewObject = FindAnyObjectByType<SlotNew>();
             SlotGeneric slotGenericObject = slotNewObject.GetComponent<SlotGeneric>();
             if (slotGenericObject.GetFilledInfo())
             {
