@@ -161,6 +161,10 @@ public class LevelController : MonoBehaviour {
         SetLevelParameters();
         SaveModes();
 
+        // Add ScoreManager for max Mana tracking per game config
+        if (GetComponent<ScoreManager>() == null)
+            gameObject.AddComponent<ScoreManager>();
+
         statsCollectorExpanded.FlushCurrentGameData();
         gameTimer.SetTime();
 
@@ -1110,6 +1114,11 @@ public class LevelController : MonoBehaviour {
         statsControllerExpanded = StatsControllerExpanded.Instance;
         if (statsControllerExpanded != null)
             statsControllerExpanded.SaveGameStats();
+
+        // Save max Mana score to server
+        ScoreManager scoreManager = ScoreManager.Instance;
+        if (scoreManager != null)
+            scoreManager.OnGameEnd();
 
         // Hide Continue button — game is over, only Back makes sense
         continueButton = ContinueButton.Instance;

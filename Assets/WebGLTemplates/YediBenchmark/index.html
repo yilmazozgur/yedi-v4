@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Yedi - AI Benchmark</title>
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+        #unity-container { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+        #unity-canvas { width: 960px; height: 540px; background: #231942; }
+        #loading-bar { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 200px; }
+        #loading-bar .fill { background: #e94560; height: 4px; transition: width 0.3s; }
+        #status { position: absolute; bottom: 10px; left: 10px; color: #ccc; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div id="unity-container">
+        <canvas id="unity-canvas" tabindex="-1"></canvas>
+    </div>
+    <div id="loading-bar"><div class="fill" id="loading-fill"></div></div>
+    <div id="status">Loading...</div>
+
+    <script>
+        // Parse query parameters for agent configuration
+        var params = new URLSearchParams(window.location.search);
+        var agentMode = params.get('agent') === 'true';
+        var wsUrl = params.get('ws') || ('ws://' + window.location.host + '/ws/game');
+
+        var buildUrl = "Build";
+        var loaderUrl = buildUrl + "/{{{ LOADER_FILENAME }}}";
+        var config = {
+            dataUrl: buildUrl + "/{{{ DATA_FILENAME }}}",
+            frameworkUrl: buildUrl + "/{{{ FRAMEWORK_FILENAME }}}",
+#if USE_WASM
+            codeUrl: buildUrl + "/{{{ CODE_FILENAME }}}",
+#endif
+#if MEMORY_FILENAME
+            memoryUrl: buildUrl + "/{{{ MEMORY_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+            symbolsUrl: buildUrl + "/{{{ SYMBOLS_FILENAME }}}",
+#endif
+            streamingAssetsUrl: "StreamingAssets",
+            companyName: "{{{ COMPANY_NAME }}}",
+            productName: "{{{ PRODUCT_NAME }}}",
+            productVersion: "{{{ PRODUCT_VERSION }}}",
+        };
+
+        var loadingFill = document.getElementById("loading-fill");
+        var statusDiv = document.getElementById("status");
+
+        var script = document.createElement("script");
+        script.src = loaderUrl;
+        script.onload = function() {
+            createUnityInstance(document.querySelector("#unity-canvas"), config, function(progress) {
+                loadingFill.style.width = (progress * 100) + "%";
+                statusDiv.textContent = "Loading... " + Math.round(progress * 100) + "%";
+            }).then(function(instance) {
+                // Expose globally for AgentBridge.jslib
+                window.unityInstance = instance;
+                document.getElementById("loading-bar").style.display = "none";
+                statusDiv.textContent = "Game loaded.";
+
+                // Auto-connect to agent server if agent mode is enabled
+                if (agentMode) {
+                    statusDiv.textContent = "Connecting to agent server: " + wsUrl;
+                    // Give Unity a moment to initialize, then connect
+                    setTimeout(function() {
+                        instance.SendMessage('AgentBridge', 'ConnectToServer', wsUrl);
+                        statusDiv.textContent = "Agent mode active. WebSocket: " + wsUrl;
+                    }, 2000);
+                } else {
+                    statusDiv.textContent = "Human play mode. Add ?agent=true to enable AI.";
+                }
+            }).catch(function(message) {
+                statusDiv.textContent = "Error: " + message;
+                console.error(message);
+            });
+        };
+        document.body.appendChild(script);
+    </script>
+</body>
+</html>

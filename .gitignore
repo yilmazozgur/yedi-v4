@@ -55,3 +55,18 @@ Thumbs.db
 
 # Downloaded Unity packages (imported via Editor)
 *.unitypackage
+
+# Environment secrets
+.env
+yedi_benchmark/.env
+
+# WebGL build output (large binary)
+WebGLBuild/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Runtime data
+scores.json
+logs/

@@ -12,7 +12,7 @@ public class CardFrame : MonoBehaviour
     [SerializeField] Sprite gainSprite3;
     [SerializeField] Sprite lossSprite;
 
-    bool numberActive = false;
+    [System.NonSerialized] public bool numberActive = false;
     bool colorActive = false;
     bool shapeActive = false;
     bool wordActive = false;
@@ -73,8 +73,8 @@ public class CardFrame : MonoBehaviour
     float hintWaitDuration = 3f;
 
     bool initialized = false;
-    int numberOfMerges = 0;
-    int maxNumberOfMerges;
+    public int numberOfMerges = 0;
+    public int maxNumberOfMerges;
 
     private bool recentlyPurchased = true;
     private bool isDragging;
@@ -1766,6 +1766,179 @@ public class CardFrame : MonoBehaviour
     //    }
     //}
 
+
+    // ------------------------------------------------------------------
+    // Programmatic drop — called by AgentBridge for AI-controlled play.
+    // Replicates the logic in Update() when isDragging becomes false.
+    // Motor params are injected from the Python-side noise model.
+    // ------------------------------------------------------------------
+    public void ExecuteProgrammaticDrop(SlotGeneric targetSlot,
+        float motorTime = 0, float motorDistance = 0,
+        float motorDistToSlot = 0, float motorHalfDistance = 0,
+        float[] motorMinDistances = null)
+    {
+        if (!initialized)
+        {
+            ActivateComponents();
+            initialized = true;
+        }
+
+        // Find current slot
+        if (currentSlot == null)
+            currentSlot = findClosestSlot.GetClosestSlot();
+
+        closestSlot = targetSlot;
+
+        // Same slot — no-op
+        if (closestSlot == currentSlot)
+        {
+            transform.position = currentSlot.transform.position;
+            currentSlot.SetCardObject(cardObject);
+            currentSlot.UpdateManaValue();
+            currentSlot.SetFilledInfo(true);
+            return;
+        }
+
+        // Cannot drop onto SlotNew
+        SlotNew slotNewTest = closestSlot.GetComponent<SlotNew>();
+        if (slotNewTest != null)
+        {
+            transform.position = currentSlot.transform.position;
+            currentSlot.SetCardObject(cardObject);
+            currentSlot.UpdateManaValue();
+            currentSlot.SetFilledInfo(true);
+            return;
+        }
+
+        // Sell slot
+        SlotSell slotSellTest = closestSlot.GetComponent<SlotSell>();
+        if (slotSellTest != null)
+        {
+            transform.position = closestSlot.transform.position;
+            closestSlot.SetCardObject(cardObject);
+            closestSlot.UpdateManaValue();
+            closestSlot.SetCardObject(cardObjectNull);
+            closestSlot.SetFilledInfo(false);
+            currentSlot.SetFilledInfo(false);
+            currentSlot.SetCardObject(cardObjectNull);
+            currentSlot.UpdateManaValue();
+            slotSellTest.SellEffectInitiate();
+            Destroy(cardObject.gameObject, 0.3f);
+            Destroy(this.gameObject, 0.1f);
+            return;
+        }
+
+        // Empty slot — move
+        if (closestSlot.GetFilledInfo() == false)
+        {
+            if (recentlyPurchased)
+            {
+                PerformMotorActionWithParams(motorTime, motorDistance, motorDistToSlot,
+                    motorHalfDistance, motorMinDistances);
+                PerformBeatAction("empty", closestSlot.slotNumber);
+            }
+            recentlyPurchased = false;
+            transform.position = closestSlot.transform.position;
+            currentSlot.SetFilledInfo(false);
+            currentSlot.SetCardObject(cardObjectNull);
+            currentSlot.UpdateManaValue();
+            closestSlot.SetFilledInfo(true);
+            closestSlot.SetCardObject(cardObject);
+            closestSlot.UpdateManaValue();
+            closestSlot.GetComponent<SpriteRenderer>().color = Color.white;
+            currentSlot.GetComponent<SpriteRenderer>().color = Color.white;
+            currentSlot = closestSlot;
+            if (modeMemory == "every action")
+                this.memoryCard.ShowAllCardInfo();
+            else if (modeMemory == "show one" || modeMemory == "show all")
+                this.memoryCard.ShowCardInfo();
+            return;
+        }
+
+        // Occupied slot — merge
+        if (numberOfMerges < maxNumberOfMerges)
+        {
+            recentlyPurchased = false;
+            PerformMotorActionWithParams(motorTime, motorDistance, motorDistToSlot,
+                motorHalfDistance, motorMinDistances);
+            PerformBeatAction("merge", closestSlot.slotNumber);
+            numberOfMerges++;
+            transform.position = closestSlot.transform.position;
+            closestSlot.GetComponent<SpriteRenderer>().color = Color.white;
+            currentSlot.GetComponent<SpriteRenderer>().color = Color.white;
+            Card cardOther = closestSlot.GetCardObject();
+            if (cardOther == null) { Debug.Log("Agent merge: null card in target slot."); return; }
+            CardFrame cardFrameOther = cardOther.GetCardFrame();
+            if (cardFrameOther == null) { Debug.Log("Agent merge: null CardFrame."); return; }
+            NumberCard numberCardOther = cardFrameOther.numberCard;
+            ColorCard colorCardOther = cardFrameOther.colorCard;
+            ShapeCard shapeCardOther = cardFrameOther.shapeCard;
+            WordCard wordCardOther = cardFrameOther.wordCard;
+            if (numberCardOther == null) { Debug.Log("Agent merge: null numberCard."); return; }
+
+            (numberGain, colorGain, shapeGain, wordGain, memoryGain) = AnimateGain(true);
+            UpdateDataDict();
+            statsCollectorExpanded.UpdateGameStats(dataDictCard, true);
+
+            this.numberCard.MergeNumberCard(numberCardOther.numberSelected);
+            this.colorCard.MergeColorCard(colorCardOther.colorSelected, colorCardOther.colorIndexGray);
+            this.shapeCard.MergeShapeCard(shapeCardOther.spriteSelectedIndex);
+            this.wordCard.MergeWordCard(wordCardOther.wordSelectedList);
+            this.memoryCard.MergeMemoryCard(memoryGain);
+
+            closestSlot.SetFilledInfo(true);
+            closestSlot.SetCardObject(cardObject);
+            closestSlot.UpdateManaValue();
+
+            currentSlot.SetFilledInfo(false);
+            currentSlot.SetCardObject(cardObjectNull);
+            currentSlot.UpdateManaValue();
+
+            Destroy(cardOther.gameObject, 0.1f);
+            Destroy(cardFrameOther.gameObject, 0.1f);
+
+            currentSlot = closestSlot;
+            return;
+        }
+        else
+        {
+            // Max merges reached — snap back
+            transform.position = currentSlot.transform.position;
+            currentSlot.SetCardObject(cardObject);
+            currentSlot.UpdateManaValue();
+            currentSlot.SetFilledInfo(true);
+            Debug.Log("Agent: Max number of merges reached.");
+        }
+    }
+
+    // Motor action with injected parameters (for AI agents)
+    private void PerformMotorActionWithParams(float timeSpanned, float distance,
+        float distToSlot, float halfDist, float[] minDistSlots)
+    {
+        if (motorActive)
+        {
+            // Use injected params if provided, otherwise use defaults
+            float t = timeSpanned > 0 ? timeSpanned : 0.5f;
+            float d = distance > 0 ? distance : 1f;
+            float ds = distToSlot;
+            float hd = halfDist;
+            float[] ms = minDistSlots != null ? minDistSlots :
+                new float[] { 1f, 1f, 1f, 1f, 1f };
+
+            motorGain = this.motorCard.MergeMotorCard(t, d, ds, hd, ms);
+            findClosestSlot.ReInitMinDistances();
+
+            if (motorGain == -1f) motorGainSpriteRenderer.sprite = lossSprite;
+            else if (motorGain == 0f) motorGainSpriteRenderer.sprite = flatSprite;
+            else if (motorGain == 1f) motorGainSpriteRenderer.sprite = gainSprite1;
+            else if (motorGain == 2f) motorGainSpriteRenderer.sprite = gainSprite2;
+            else if (motorGain == 3f) motorGainSpriteRenderer.sprite = gainSprite3;
+
+            UpdateDataDict();
+            statsCollectorExpanded.UpdateGameStats(dataDictCard, false);
+            StartCoroutine(ShowMotorGainIcon());
+        }
+    }
 
     public void OnMouseDown()
     {

@@ -152,10 +152,40 @@ public class HeptagonController : MonoBehaviour
         if (mainCanvas != null)
         {
             FindAllHeptagonItems();
-            heptagonCanvas.gameObject.SetActive(false);
+
+            // In Scene Selection: skip left panel, show heptagon directly
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Scene Selection Screen")
+            {
+                mainCanvas.gameObject.SetActive(false);
+                heptagonCanvas.gameObject.SetActive(true);
+
+                gameDescriptionCanvas = FindAnyObjectByType<GameDescriptionCanvas>();
+                descriptionController = FindAnyObjectByType<DescriptionController>();
+
+                if (AgentBridge.agentMode)
+                {
+                    // Agent/benchmark mode: go straight to Playground, hide level selector
+                    PrepareSceneSelection();
+                    PrepareAnyCombinationLevel();
+                    levelLoader.SetSelectedLevel(9);
+                    // Hide the game description / horizontal level selector
+                    if (gameDescriptionCanvas != null)
+                        gameDescriptionCanvas.gameObject.SetActive(false);
+                }
+                else
+                {
+                    ActivateHeptagon();
+                    ActivateAllButtons();
+                }
+            }
+            else
+            {
+                heptagonCanvas.gameObject.SetActive(false);
+            }
         }
 
-        gameDescriptionCanvas = FindAnyObjectByType<GameDescriptionCanvas>();
+        if (gameDescriptionCanvas == null)
+            gameDescriptionCanvas = FindAnyObjectByType<GameDescriptionCanvas>();
     }
 
     public void PlayVideo(string videoURL)

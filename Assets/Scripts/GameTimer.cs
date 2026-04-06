@@ -18,7 +18,7 @@ public class GameTimer : MonoBehaviour {
     Slider timeSlider;
     LevelController levelController;
     bool timerFinished = false;
-    float totalTime = 0f;
+    public float totalTime = 0f;
     float timePreviousFrame;
     public bool gamePaused = false;
     bool doubleTime = false;
@@ -33,7 +33,7 @@ public class GameTimer : MonoBehaviour {
     public void SetTime()
     {
         doubleTime = SaveGame.Load<bool>("doubleTime");
-        levelTime = 120;
+        levelTime = 20;
         if (doubleTime == true)
         {
             levelTime = levelTime * 2f;

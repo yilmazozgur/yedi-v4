@@ -42,10 +42,6 @@ public class LevelLoader : MonoBehaviour {
             {
                 LoadSceneSelection();
             }
-            else if (lastScene == "Stats Screen Expanded")
-            {
-                LoadStats();
-            }
             else if (lastScene == "Options Screen")
             {
                 LoadSceneSelection();
@@ -73,24 +69,27 @@ public class LevelLoader : MonoBehaviour {
         purchaseGame = true; // Always unlocked
         tutorialPlayed = true; // Skip tutorial by default for AI testbed
 
+        // In agent/benchmark mode, default to Playground (level 9)
+        if (AgentBridge.agentMode)
+        {
+            selectedLevel = 9;
+            SaveGame.Save<int>("selectedLevel", 9);
+        }
+
         // Hide buttons that don't apply to WebGL AI testbed
-        RectTransform playBtnRect = null;
-        RectTransform statsBtnRect = null;
         foreach (UnityEngine.UI.Button btn in FindObjectsByType<UnityEngine.UI.Button>(FindObjectsSortMode.None))
         {
             string n = btn.gameObject.name;
-            if (n == "Quit Button" || n == "Options Button" || n == "Unlock Button")
+            if (n == "Quit Button" || n == "Options Button" || n == "Unlock Button" || n == "Stats Button")
                 btn.gameObject.SetActive(false);
             else if (n == "Play Button")
-                playBtnRect = btn.GetComponent<RectTransform>();
-            else if (n == "Stats Button")
-                statsBtnRect = btn.GetComponent<RectTransform>();
+            {
+                // Center the Games button since it's the only one left
+                RectTransform rt = btn.GetComponent<RectTransform>();
+                if (rt != null)
+                    rt.anchoredPosition = new Vector2(rt.anchoredPosition.x, 0);
+            }
         }
-        // Center the two remaining buttons vertically with spacing
-        if (playBtnRect != null)
-            playBtnRect.anchoredPosition = new Vector2(playBtnRect.anchoredPosition.x, 120);
-        if (statsBtnRect != null)
-            statsBtnRect.anchoredPosition = new Vector2(statsBtnRect.anchoredPosition.x, -120);
     }
 
     public void UpdatePurchaseStatus()

@@ -371,27 +371,7 @@ public class StatsControllerExpanded : MonoBehaviour
             return;
         }
 
-        // Try loading from server first (survives server restarts / page reloads)
-        var serverData = StatsSyncBridge.LoadFromServer();
-        if (serverData != null && serverData.Count > 0)
-        {
-            Debug.Log("LoadSavedStats: loaded from server (" + serverData.Count + " keys)");
-            statsDictionary = serverData;
-            foreach (string lineChartName in chartLineTypes)
-            {
-                if (!statsDictionary.ContainsKey(lineChartName))
-                    statsDictionary.Add(lineChartName, new List<float>());
-            }
-            if (!statsDictionary.ContainsKey("MeanGross"))
-            {
-                PrepareMeanAndStd();
-                statsDictionary.Add("MeanGross", listMean);
-                statsDictionary.Add("StdGross", listStd);
-            }
-            return;
-        }
-
-        // Fallback to IndexedDB (SaveGame)
+        // Load from IndexedDB (SaveGame)
         if (SaveGame.Exists("statsDictionary"))
         {
             statsDictionary = SaveGame.Load<Dictionary<string, List<float>>>("statsDictionary");
@@ -450,7 +430,7 @@ public class StatsControllerExpanded : MonoBehaviour
 
         Debug.Log("SaveGameStats: saved " + savedCount + " metrics. Games recorded=" + statsDictionary["Math"].Count);
         SaveGame.Save<Dictionary<string, List<float>>>("statsDictionary", statsDictionary);
-        StatsSyncBridge.SaveToServer(statsDictionary);
+        // Server-side persistence now handled by ScoreManager (max Mana per config)
     }
 
     public void FlushCurrentGameData()
@@ -740,7 +720,7 @@ public class StatsControllerExpanded : MonoBehaviour
     public void ResetAllStats()
     {
         SaveGame.Delete("statsDictionary");
-        StatsSyncBridge.DeleteOnServer();
+        // Server-side scores managed separately via ScoreManager
         numberOfGamesPlayed = 0;
         HideResetDialog();
         FlushStatsDictionary();

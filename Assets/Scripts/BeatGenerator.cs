@@ -22,7 +22,7 @@ public class BeatGenerator : MonoBehaviour
     AudioClip audioClip1;
     AudioClip audioClip2;
     float timeStart = 0f;
-    float beatPeriod = 1.8f;
+    public float beatPeriod = 1.8f;
     float beat2Delay = 0.28f;
     float beat2Period = 0.17f;
     string modeBeat;

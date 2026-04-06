@@ -120,7 +120,8 @@ public class NumberCard : CardTypeBase
                 } while (randomIndex == 0);
                 numberSelected = (float)randomIndex;
                 numberSelectedString = intervalList[randomIndex];
-                costText.fontSize = 16f;
+                if (costText == null) costText = GetComponentInChildren<TextMeshProUGUI>();
+                if (costText != null) costText.fontSize = 16f;
             }
             else if (modeNumber == "trigon")
             {
@@ -131,7 +132,8 @@ public class NumberCard : CardTypeBase
                 } while (randomIndex == 0);
                 numberSelected = (float)randomIndex;
                 numberSelectedString = trigonList[randomIndex];
-                costText.fontSize = 14f;
+                if (costText == null) costText = GetComponentInChildren<TextMeshProUGUI>();
+                if (costText != null) costText.fontSize = 14f;
             }
             else if (modeNumber == "sort")
             {
@@ -141,7 +143,10 @@ public class NumberCard : CardTypeBase
             }
         }
 
-        costText.text = numberSelectedString;
+        if (costText == null)
+            costText = GetComponentInChildren<TextMeshProUGUI>();
+        if (costText != null)
+            costText.text = numberSelectedString;
 
         return numberSelectedString;
     }

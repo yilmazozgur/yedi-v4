@@ -110,7 +110,13 @@ public class ManaDisplay : MonoBehaviour
             manaValueRounded = Mathf.Round(manaValue);
             if(manaText)
             {
-                manaText.text = manaValueRounded.ToString();
+                int best = ScoreManager.currentMaxScore;
+                if ((int)manaValueMax > best)
+                    manaText.text = manaValueRounded + "\n\n\nBest: " + (int)manaValueMax + " *NEW*";
+                else if (best > 0)
+                    manaText.text = manaValueRounded + "\n\n\nBest: " + best;
+                else
+                    manaText.text = manaValueRounded.ToString();
             }
         }
     }

@@ -1,57 +1,81 @@
 mergeInto(LibraryManager.library, {
 
-    JS_SaveStats: function(jsonPtr) {
-        var json = UTF8ToString(jsonPtr);
-        console.log('[StatsSync] JS_SaveStats called, length=' + json.length);
+    JS_GetPlayerName: function() {
+        console.log('[ScoreSync] JS_GetPlayerName called');
         var xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/stats', false);
-        xhr.setRequestHeader('Content-Type', 'application/json');
-        try {
-            xhr.send(json);
-            if (xhr.status === 200) {
-                console.log('[StatsSync] Stats saved to server');
-            } else {
-                console.error('[StatsSync] Save failed: ' + xhr.status);
-            }
-        } catch(e) {
-            console.error('[StatsSync] Save error: ' + e);
-        }
-    },
-
-    JS_LoadStats: function() {
-        console.log('[StatsSync] JS_LoadStats called');
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', '/api/stats', false);
+        xhr.open('GET', '/api/player', false);
         try {
             xhr.send();
-            if (xhr.status === 200 && xhr.responseText && xhr.responseText !== '{}') {
-                console.log('[StatsSync] Loaded stats from server, length=' + xhr.responseText.length);
-                var bufferSize = lengthBytesUTF8(xhr.responseText) + 1;
+            if (xhr.status === 200) {
+                var data = JSON.parse(xhr.responseText);
+                var name = data.name || 'default';
+                console.log('[ScoreSync] Player: ' + name);
+                var bufferSize = lengthBytesUTF8(name) + 1;
                 var buffer = _malloc(bufferSize);
-                stringToUTF8(xhr.responseText, buffer, bufferSize);
+                stringToUTF8(name, buffer, bufferSize);
                 return buffer;
-            } else {
-                console.log('[StatsSync] No stats on server (status=' + xhr.status + ')');
             }
         } catch(e) {
-            console.error('[StatsSync] Load error: ' + e);
+            console.error('[ScoreSync] GetPlayer error: ' + e);
         }
-        var empty = '{}';
-        var bufSize = lengthBytesUTF8(empty) + 1;
+        var fallback = 'default';
+        var bufSize = lengthBytesUTF8(fallback) + 1;
         var buf = _malloc(bufSize);
-        stringToUTF8(empty, buf, bufSize);
+        stringToUTF8(fallback, buf, bufSize);
         return buf;
     },
 
-    JS_DeleteStats: function() {
-        console.log('[StatsSync] JS_DeleteStats called');
+    JS_GetMaxScore: function(usernamePtr, configPtr) {
+        var username = UTF8ToString(usernamePtr);
+        var config = UTF8ToString(configPtr);
+        console.log('[ScoreSync] JS_GetMaxScore: ' + username + ' | ' + config);
         var xhr = new XMLHttpRequest();
-        xhr.open('DELETE', '/api/stats', false);
+        xhr.open('GET', '/api/scores/' + encodeURIComponent(username), false);
         try {
             xhr.send();
-            console.log('[StatsSync] Stats deleted on server');
+            if (xhr.status === 200) {
+                var scores = JSON.parse(xhr.responseText);
+                var maxScore = scores[config] || 0;
+                console.log('[ScoreSync] Max score: ' + maxScore);
+                return maxScore;
+            }
         } catch(e) {
-            console.error('[StatsSync] Delete error: ' + e);
+            console.error('[ScoreSync] GetMaxScore error: ' + e);
+        }
+        return 0;
+    },
+
+    JS_PostScore: function(usernamePtr, configPtr, mana) {
+        var username = UTF8ToString(usernamePtr);
+        var config = UTF8ToString(configPtr);
+        console.log('[ScoreSync] JS_PostScore: ' + username + ' | ' + config + ' | ' + mana);
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/scores/' + encodeURIComponent(username), false);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        try {
+            var body = JSON.stringify({config: config, mana: mana});
+            xhr.send(body);
+            if (xhr.status === 200) {
+                var resp = JSON.parse(xhr.responseText);
+                console.log('[ScoreSync] New record: ' + resp.new_record + ', max: ' + resp.max_mana);
+                return resp.max_mana;
+            }
+        } catch(e) {
+            console.error('[ScoreSync] PostScore error: ' + e);
+        }
+        return mana;
+    },
+
+    JS_DeleteScores: function(usernamePtr) {
+        var username = UTF8ToString(usernamePtr);
+        console.log('[ScoreSync] JS_DeleteScores: ' + username);
+        var xhr = new XMLHttpRequest();
+        xhr.open('DELETE', '/api/scores/' + encodeURIComponent(username), false);
+        try {
+            xhr.send();
+            console.log('[ScoreSync] Scores deleted for ' + username);
+        } catch(e) {
+            console.error('[ScoreSync] DeleteScores error: ' + e);
         }
     }
 
