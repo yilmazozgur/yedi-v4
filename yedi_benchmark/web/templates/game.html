@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+    .game-frame-host {
+        width: 100%;
+        height: calc(100vh - 140px);
+        background: #000;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .game-frame-host iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        display: block;
+    }
+    .game-controls {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 12px;
+        align-items: center;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="game-controls">
+    <label class="dim">Mode:</label>
+    <select id="g-mode" class="btn btn-sm" style="padding: 6px 10px;">
+        <option value="">Human play</option>
+        <option value="agent">Agent (auto-connect WebSocket)</option>
+    </select>
+    <button class="btn btn-sm" id="g-reload">Reload</button>
+    <span class="dim mono" id="g-url"></span>
+</div>
+<div class="game-frame-host">
+    <iframe id="game-frame" src="/game/embed" allow="autoplay; clipboard-write"></iframe>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const frame = document.getElementById("game-frame");
+    const sel = document.getElementById("g-mode");
+    const urlLabel = document.getElementById("g-url");
+
+    function applyMode() {
+        const url = sel.value === "agent" ? "/game/embed?agent=true" : "/game/embed";
+        frame.src = url;
+        urlLabel.textContent = url;
+    }
+    sel.addEventListener("change", applyMode);
+    document.getElementById("g-reload").addEventListener("click", applyMode);
+    urlLabel.textContent = frame.src.replace(window.location.origin, "");
+})();
+</script>
+{% endblock %}

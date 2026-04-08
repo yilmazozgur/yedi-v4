@@ -25,9 +25,22 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+
+# Support both `python -m yedi_benchmark.gym_server` (relative import) and the
+# legacy `python gym_server.py` invocation (absolute fallback).
+try:
+    from .api import mount_api_routers
+    from .bridge_status import get_bridge_status
+    from .web import mount_web_ui
+except ImportError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from yedi_benchmark.api import mount_api_routers
+    from yedi_benchmark.bridge_status import get_bridge_status
+    from yedi_benchmark.web import mount_web_ui
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("yedi_server")
@@ -56,6 +69,15 @@ def save_scores(scores: dict):
 # WebSocket bridge state
 # ------------------------------------------------------------------
 
+class BridgeError(Exception):
+    """Raised when the WebSocket bridge between agent and game fails.
+
+    Distinguishes bridge transport problems (game tab closed, send_json on a
+    closed ASGI socket, etc.) from genuine command failures so the agent side
+    can shut down cleanly instead of cascading into ASGI runtime errors.
+    """
+
+
 class GameConnection:
     """Represents the browser/Unity WebSocket connection."""
     def __init__(self, ws: WebSocket):
@@ -63,11 +85,41 @@ class GameConnection:
         self.connected = True
 
     async def send(self, data: dict):
-        if self.connected:
+        if not self.connected:
+            raise BridgeError("game connection is closed")
+        try:
             await self.ws.send_json(data)
+        except Exception as e:
+            # starlette raises RuntimeError("Unexpected ASGI message...") if the
+            # transport was closed underneath us. Treat any send failure as a
+            # bridge death and surface it to the agent side as BridgeError.
+            self.mark_dead()
+            raise BridgeError(f"game send failed: {e}") from e
 
     async def receive(self) -> dict:
         return await self.ws.receive_json()
+
+    def mark_dead(self):
+        """Mark the bridge as dead and fail all in-flight pending requests.
+
+        Idempotent — safe to call from both the disconnect handler and the
+        send-failure path.
+        """
+        global game_connection
+        if not self.connected:
+            return
+        self.connected = False
+        try:
+            get_bridge_status().mark_game_disconnected()
+        except Exception:
+            pass
+        if game_connection is self:
+            game_connection = None
+        if agent_connection is not None:
+            for seq, fut in list(agent_connection.pending_responses.items()):
+                if not fut.done():
+                    fut.set_exception(BridgeError("game connection lost"))
+            agent_connection.pending_responses.clear()
 
 
 class AgentConnection:
@@ -89,18 +141,23 @@ class AgentConnection:
         self.pending_responses[seq] = future
 
         # Forward to game connection
-        if game_connection and game_connection.connected:
+        if game_connection is None or not game_connection.connected:
+            self.pending_responses.pop(seq, None)
+            raise BridgeError("no game connected")
+
+        try:
             await game_connection.send(command)
-        else:
-            future.set_exception(Exception("No game connected"))
-            del self.pending_responses[seq]
-            raise Exception("No game connected")
+        except BridgeError:
+            self.pending_responses.pop(seq, None)
+            raise
 
         try:
             return await asyncio.wait_for(future, timeout)
         except asyncio.TimeoutError:
             self.pending_responses.pop(seq, None)
-            raise Exception(f"Command timed out after {timeout}s: {command.get('type')}")
+            raise BridgeError(
+                f"command timed out after {timeout}s: {command.get('type')}"
+            )
 
     def on_game_message(self, message: dict):
         """Handle a message from the game, routing to the right pending request."""
@@ -122,6 +179,12 @@ agent_connection: Optional[AgentConnection] = None
 # ------------------------------------------------------------------
 
 app = FastAPI(title="Yedi AI Benchmark Server")
+
+# Phase 2 API routers (agents, prompts, configs, runs)
+mount_api_routers(app)
+
+# Phase 3 dashboard pages (Jinja templates + static assets at /static/...)
+mount_web_ui(app)
 
 # --- Score REST API (preserved from server.py) ---
 
@@ -198,6 +261,8 @@ async def agent_command_http(body: dict):
     try:
         response = await agent_connection.send_command(body)
         return response
+    except BridgeError as e:
+        raise HTTPException(503, str(e))
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -220,7 +285,9 @@ async def game_websocket(ws: WebSocket):
     """WebSocket for the browser/Unity game to connect to."""
     global game_connection
     await ws.accept()
-    game_connection = GameConnection(ws)
+    conn = GameConnection(ws)
+    game_connection = conn
+    get_bridge_status().mark_game_connected()
     logger.info("Game connected via WebSocket")
 
     try:
@@ -233,7 +300,12 @@ async def game_websocket(ws: WebSocket):
                 logger.debug(f"Game message (no agent): {json.dumps(data)[:200]}")
     except WebSocketDisconnect:
         logger.info("Game disconnected")
-        game_connection = None
+    except Exception as e:
+        logger.warning(f"Game websocket failed: {e}")
+    finally:
+        # mark_dead is idempotent and clears pending requests so the agent
+        # gets a clean BridgeError instead of waiting for the 30s timeout.
+        conn.mark_dead()
 
 
 @app.websocket("/ws/agent")
@@ -241,34 +313,70 @@ async def agent_websocket(ws: WebSocket):
     """WebSocket for the Python gym environment to connect to."""
     global agent_connection
     await ws.accept()
-    agent_connection = AgentConnection(ws)
+    conn = AgentConnection(ws)
+    agent_connection = conn
+    get_bridge_status().mark_agent_connected()
     logger.info("Agent connected via WebSocket")
 
     try:
         while True:
             data = await ws.receive_json()
-            # Agent sends commands — forward to game
-            if game_connection and game_connection.connected:
-                # Add sequence number if not present
-                if "seq" not in data:
-                    agent_connection.seq += 1
-                    data["seq"] = agent_connection.seq
+            seq = data.get("seq")
+            if seq is None:
+                conn.seq += 1
+                seq = conn.seq
+                data["seq"] = seq
+
+            try:
+                if game_connection is None or not game_connection.connected:
+                    await ws.send_json({"error": "no game connected", "seq": seq})
+                    continue
 
                 future = asyncio.get_event_loop().create_future()
-                agent_connection.pending_responses[data["seq"]] = future
-                await game_connection.send(data)
+                conn.pending_responses[seq] = future
+                try:
+                    await game_connection.send(data)
+                except BridgeError as be:
+                    conn.pending_responses.pop(seq, None)
+                    await ws.send_json({"error": str(be), "seq": seq})
+                    continue
 
-                # Wait for response and forward back to agent
                 try:
                     response = await asyncio.wait_for(future, 30.0)
                     await ws.send_json(response)
                 except asyncio.TimeoutError:
-                    await ws.send_json({"error": "timeout", "seq": data.get("seq")})
-            else:
-                await ws.send_json({"error": "No game connected", "seq": data.get("seq", 0)})
+                    conn.pending_responses.pop(seq, None)
+                    await ws.send_json({"error": "timeout", "seq": seq})
+                except BridgeError as be:
+                    # Game died while we were awaiting — mark_dead already
+                    # popped the future from pending_responses.
+                    await ws.send_json({"error": str(be), "seq": seq})
+            except WebSocketDisconnect:
+                raise
+            except Exception as cmd_err:
+                # Per-command failure: log it but keep the agent ws alive so
+                # the run can decide what to do (retry, abort, etc.).
+                logger.warning(f"Agent command {data.get('type')} failed: {cmd_err}")
+                try:
+                    await ws.send_json({"error": str(cmd_err), "seq": seq})
+                except Exception:
+                    raise
     except WebSocketDisconnect:
         logger.info("Agent disconnected")
-        agent_connection = None
+    except Exception as e:
+        logger.warning(f"Agent websocket failed: {e}")
+    finally:
+        for fut in list(conn.pending_responses.values()):
+            if not fut.done():
+                fut.set_exception(BridgeError("agent connection lost"))
+        conn.pending_responses.clear()
+        conn.connected = False
+        if agent_connection is conn:
+            agent_connection = None
+        try:
+            get_bridge_status().mark_agent_disconnected()
+        except Exception:
+            pass
 
 
 # ------------------------------------------------------------------
@@ -277,6 +385,27 @@ async def agent_websocket(ws: WebSocket):
 
 # Store build_dir for use in routes
 _build_dir: str = ""
+
+
+def _reconcile_orphan_runs() -> None:
+    """Mark stranded RUNNING/PENDING records as FAILED on startup.
+
+    A previous server process may have crashed or been killed mid-run; the
+    on-disk record is still ``status: running`` even though the worker thread
+    is gone. Without this, the UI is stuck — Cancel returns 404 (executor
+    isn't tracking that run) and the row template hides Delete while the
+    status is "running".
+    """
+    try:
+        from .api.deps import get_run_registry
+        reconciled = get_run_registry().reconcile_orphans()
+        if reconciled:
+            logger.warning(
+                "Reconciled %d orphaned run(s) on startup: %s",
+                len(reconciled), ", ".join(reconciled),
+            )
+    except Exception as e:
+        logger.warning("Run reconciliation failed (non-fatal): %s", e)
 
 
 def setup_static_files(build_dir: str):
@@ -305,20 +434,31 @@ def setup_static_files(build_dir: str):
     logger.info(f"Serving static files from: {build_dir}")
 
 
-@app.get("/")
-async def serve_index():
-    """Serve the WebGL game's index.html."""
+@app.get("/game/embed", include_in_schema=False)
+async def serve_game_embed():
+    """Serve the Unity WebGL game's index.html, intended to be iframed by
+    the dashboard's /game page. The dashboard owns the /game URL itself."""
     if not _build_dir:
         return JSONResponse(
             {"error": "No build directory configured. Run: python gym_server.py --build-dir /path/to/WebGLBuild"},
             status_code=503)
     index_path = os.path.join(_build_dir, "index.html")
-    if os.path.exists(index_path):
+    if not os.path.exists(index_path):
+        return JSONResponse(
+            {"error": "No index.html found. Do a full WebGL build from Unity with the YediBenchmark template.",
+             "build_dir": _build_dir},
+            status_code=503)
+
+    # Inject <base href="/"> so the WebGL loader's relative "Build/..." paths
+    # resolve to /Build/... regardless of the document URL.
+    try:
+        with open(index_path, "r", encoding="utf-8") as f:
+            html = f.read()
+        if "<base " not in html:
+            html = html.replace("<head>", '<head>\n    <base href="/">', 1)
+        return HTMLResponse(html)
+    except OSError:
         return FileResponse(index_path, media_type="text/html")
-    return JSONResponse(
-        {"error": "No index.html found. Do a full WebGL build from Unity with the YediBenchmark template.",
-         "build_dir": _build_dir},
-        status_code=503)
 
 
 @app.get("/Build/{filepath:path}")
@@ -390,6 +530,7 @@ def main():
     args = parser.parse_args()
 
     setup_static_files(os.path.abspath(args.build_dir))
+    _reconcile_orphan_runs()
 
     logger.info(f"Starting server on {args.host}:{args.port}")
     logger.info(f"Game WebSocket: ws://{args.host}:{args.port}/ws/game")

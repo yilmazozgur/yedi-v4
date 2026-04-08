@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block head %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-title">Analysis dashboard</div>
+    <p class="card-sub">Pulls completed run records and aggregates per dimension. One bar per agent per game config; one chart per cognitive dimension.</p>
+    <div class="form-row" style="max-width: 320px;">
+        <label for="a-dim-filter">Filter dimension</label>
+        <select id="a-dim-filter">
+            <option value="">All dimensions</option>
+        </select>
+    </div>
+</div>
+
+<div id="dimension-charts"></div>
+
+<div class="card">
+    <div class="card-title">Per-config leaderboard</div>
+    <table class="table">
+        <thead><tr><th>Config</th><th>Best agent</th><th>Best mean mana</th><th>Runs</th></tr></thead>
+        <tbody id="leaderboard-tbody">
+            <tr><td colspan="4" class="empty-state">Loading…</td></tr>
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(async function () {
+    const { api, clear, escapeHtml, fmtNum, toastError } = window.YediApp;
+
+    function dimensionOf(configName) {
+        // Convention used by benchmark_configs.py: "<tier>_<dimension>_<mode>"
+        const parts = (configName || "").split("_");
+        return parts.length >= 2 ? parts[1] : "other";
+    }
+
+    async function load() {
+        try {
+            const runs = await api.get("/api/runs");
+            const completed = runs.filter((r) => r.status === "completed");
+
+            // Aggregate: dimension -> config -> agent -> mean_max_mana[]
+            const agg = {};
+            const allDims = new Set();
+            for (const r of completed) {
+                const agentName = (r.agent_snapshot && r.agent_snapshot.name) || "unknown";
+                for (const [cfgName, cr] of Object.entries(r.results || {})) {
+                    const dim = dimensionOf(cfgName);
+                    allDims.add(dim);
+                    agg[dim] = agg[dim] || {};
+                    agg[dim][cfgName] = agg[dim][cfgName] || {};
+                    agg[dim][cfgName][agentName] = agg[dim][cfgName][agentName] || [];
+                    agg[dim][cfgName][agentName].push(cr.mean_max_mana || 0);
+                }
+            }
+
+            const dimSelect = document.getElementById("a-dim-filter");
+            for (const d of Array.from(allDims).sort()) {
+                const opt = document.createElement("option");
+                opt.value = d; opt.textContent = d;
+                dimSelect.appendChild(opt);
+            }
+
+            function renderCharts(filterDim) {
+                const host = document.getElementById("dimension-charts");
+                clear(host);
+                const dims = filterDim ? [filterDim] : Array.from(allDims).sort();
+                if (dims.length === 0) {
+                    host.innerHTML = `<div class="card empty-state">No completed runs yet.</div>`;
+                    return;
+                }
+                for (const dim of dims) {
+                    const card = document.createElement("div");
+                    card.className = "card";
+                    card.innerHTML = `<div class="card-title">${escapeHtml(dim)}</div><div class="dim-chart" id="chart-${escapeHtml(dim)}"></div>`;
+                    host.appendChild(card);
+
+                    const cfgs = Object.keys(agg[dim] || {}).sort();
+                    const agentNames = new Set();
+                    for (const c of cfgs) Object.keys(agg[dim][c]).forEach((a) => agentNames.add(a));
+
+                    const traces = [];
+                    for (const a of agentNames) {
+                        traces.push({
+                            type: "bar",
+                            name: a,
+                            x: cfgs,
+                            y: cfgs.map((c) => {
+                                const arr = (agg[dim][c] || {})[a] || [];
+                                return arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
+                            }),
+                        });
+                    }
+                    Plotly.newPlot(`chart-${dim}`, traces, {
+                        barmode: "group",
+                        paper_bgcolor: "#181825",
+                        plot_bgcolor: "#181825",
+                        font: { color: "#e8e8f0" },
+                        margin: { t: 20, l: 50, r: 20, b: 80 },
+                        xaxis: { tickangle: -30 },
+                        yaxis: { title: "Mean max mana" },
+                        legend: { orientation: "h" },
+                    }, { displayModeBar: false, responsive: true });
+                }
+            }
+
+            renderCharts("");
+            dimSelect.addEventListener("change", () => renderCharts(dimSelect.value));
+
+            // Leaderboard: best agent per config across all completed runs
+            const board = {};
+            for (const r of completed) {
+                const agentName = (r.agent_snapshot && r.agent_snapshot.name) || "unknown";
+                for (const [cfgName, cr] of Object.entries(r.results || {})) {
+                    board[cfgName] = board[cfgName] || { runs: 0, best: -Infinity, bestAgent: "—" };
+                    board[cfgName].runs += 1;
+                    if ((cr.mean_max_mana || 0) > board[cfgName].best) {
+                        board[cfgName].best = cr.mean_max_mana || 0;
+                        board[cfgName].bestAgent = agentName;
+                    }
+                }
+            }
+            const tbody = document.getElementById("leaderboard-tbody");
+            clear(tbody);
+            const entries = Object.entries(board).sort((a, b) => a[0].localeCompare(b[0]));
+            if (entries.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No completed runs yet.</td></tr>`;
+            } else {
+                for (const [name, info] of entries) {
+                    const tr = document.createElement("tr");
+                    tr.innerHTML = `<td class="col-mono">${escapeHtml(name)}</td>
+                                    <td>${escapeHtml(info.bestAgent)}</td>
+                                    <td>${fmtNum(info.best)}</td>
+                                    <td>${info.runs}</td>`;
+                    tbody.appendChild(tr);
+                }
+            }
+        } catch (e) { toastError(e); }
+    }
+
+    load();
+})();
+</script>
+{% endblock %}

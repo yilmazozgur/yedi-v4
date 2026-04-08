@@ -73,6 +73,7 @@ public class CardFrame : MonoBehaviour
     float hintWaitDuration = 3f;
 
     bool initialized = false;
+    public bool IsInitialized => initialized;
     public int numberOfMerges = 0;
     public int maxNumberOfMerges;
 
@@ -325,6 +326,27 @@ public class CardFrame : MonoBehaviour
             StartCoroutine(ShowBeatGainIcon());
 
         }
+    }
+
+    /// <summary>
+    /// Idempotently run ActivateComponents() if it hasn't run yet.
+    /// Safe to call from any path that needs the card's dimensions to be
+    /// resolved (move, sell, agent serialization, ...). Without this, code
+    /// that reads <c>numberCard.numberSelected</c> in the same frame as the
+    /// draw will see the <c>-1000f</c> sentinel and treat the card as blank.
+    /// Bails out if Start() hasn't run yet (numberCard etc. unresolved).
+    /// </summary>
+    public void EnsureActivated()
+    {
+        if (initialized) return;
+        // ActivateComponents() needs all the card dimension components.
+        // CardFrame.Start() populates them; if it hasn't run yet, skip and
+        // let Update() handle it on the next frame.
+        if (numberCard == null || colorCard == null || shapeCard == null ||
+            wordCard == null || beatCard == null || memoryCard == null ||
+            motorCard == null) return;
+        ActivateComponents();
+        initialized = true;
     }
 
     private void Update()
@@ -1777,11 +1799,7 @@ public class CardFrame : MonoBehaviour
         float motorDistToSlot = 0, float motorHalfDistance = 0,
         float[] motorMinDistances = null)
     {
-        if (!initialized)
-        {
-            ActivateComponents();
-            initialized = true;
-        }
+        EnsureActivated();
 
         // Find current slot
         if (currentSlot == null)

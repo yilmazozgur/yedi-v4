@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-title">Launch a benchmark run</div>
+    <p class="card-sub">Pick an agent, the observation/memory mode, and one or more game configs. The active prompt is snapshotted into the run record at start time.</p>
+    <form id="bench-form">
+        <div class="form-grid">
+            <div class="form-row">
+                <label for="b-agent">Agent</label>
+                <select id="b-agent" required></select>
+            </div>
+            <div class="form-row">
+                <label for="b-mode">Mode</label>
+                <select id="b-mode">
+                    <option value="metadata-a">Metadata stateless</option>
+                    <option value="metadata-b" selected>Metadata conversational</option>
+                    <option value="metadata-c">Metadata compact-history</option>
+                    <option value="vision-a">Vision stateless</option>
+                    <option value="vision-b">Vision conversational</option>
+                    <option value="vision-c">Vision compact-history</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label for="b-episodes">Episodes per config</label>
+                <input id="b-episodes" type="number" value="3" min="1">
+            </div>
+            <div class="form-row">
+                <label for="b-max-steps">Max steps per episode</label>
+                <input id="b-max-steps" type="number" value="100" min="1">
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-top: 16px;">
+            <label>Configs</label>
+            <div class="tier-buttons" id="tier-buttons"></div>
+            <div class="checkbox-row" id="config-picker">Loading…</div>
+            <div class="dim mono" id="config-summary" style="margin-top: 6px;">0 selected</div>
+        </div>
+
+        <div class="form-row" style="margin-top: 16px;">
+            <label>Ablations <span class="dim">(off = canonical benchmark)</span></label>
+            <div class="checkbox-row">
+                <label title="When on, the LLM sees the bridge's pre-computed merge_previews block (per-dim gain tier for every legal merge). Off = the model has to estimate gains itself.">
+                    <input type="checkbox" id="b-show-previews">
+                    Show merge previews to LLM (assisted)
+                </label>
+                <label title="When on, the bridge ships hidden card values + previews regardless of Memory mode. Off = Memory dimension stays meaningful.">
+                    <input type="checkbox" id="b-perfect-memory">
+                    Perfect memory (reveal hidden cards)
+                </label>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <span class="dim mono" id="b-launch-hint"></span>
+            <button type="submit" class="btn btn-primary" id="b-launch">Launch run</button>
+        </div>
+    </form>
+</div>
+
+<div class="card" id="b-no-game-card" style="display: none;">
+    <div class="card-title">Game not connected</div>
+    <p class="muted">
+        Open the <a href="/game">Game tab</a>, switch the dropdown to
+        <strong>Agent (auto-connect WebSocket)</strong>, and wait for it to
+        load. The browser game is the other end of the WebSocket bridge —
+        without it, the agent has no game to play.
+    </p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const { api, clear, escapeHtml, toast, toastError } = window.YediApp;
+
+    let allConfigs = {};
+    let tiers = {};
+
+    async function loadAgents() {
+        const sel = document.getElementById("b-agent");
+        try {
+            const agents = await api.get("/api/agents");
+            clear(sel);
+            for (const a of agents) {
+                const opt = document.createElement("option");
+                opt.value = a.id;
+                opt.textContent = `${a.name} (${a.provider}/${a.model || "—"})`;
+                sel.appendChild(opt);
+            }
+        } catch (e) { toastError(e); }
+    }
+
+    async function loadConfigs() {
+        const picker = document.getElementById("config-picker");
+        try {
+            const data = await api.get("/api/configs");
+            tiers = data.tiers || {};
+            allConfigs = data.configs || {};
+
+            const tierBar = document.getElementById("tier-buttons");
+            clear(tierBar);
+            for (const tierName of Object.keys(tiers)) {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "btn btn-sm";
+                btn.textContent = tierName;
+                btn.addEventListener("click", () => selectTier(tierName));
+                tierBar.appendChild(btn);
+            }
+            const noneBtn = document.createElement("button");
+            noneBtn.type = "button";
+            noneBtn.className = "btn btn-sm btn-ghost";
+            noneBtn.textContent = "Clear";
+            noneBtn.addEventListener("click", () => selectNone());
+            tierBar.appendChild(noneBtn);
+
+            clear(picker);
+            for (const name of Object.keys(allConfigs)) {
+                const lbl = document.createElement("label");
+                const cb = document.createElement("input");
+                cb.type = "checkbox"; cb.value = name; cb.dataset.config = name;
+                cb.addEventListener("change", updateSummary);
+                lbl.appendChild(cb);
+                lbl.appendChild(document.createTextNode(" " + name));
+                picker.appendChild(lbl);
+            }
+            updateSummary();
+        } catch (e) { toastError(e); }
+    }
+
+    function selectTier(tierName) {
+        const set = new Set(tiers[tierName] || []);
+        document.querySelectorAll("#config-picker input[type=checkbox]").forEach((cb) => {
+            cb.checked = set.has(cb.value);
+        });
+        updateSummary();
+    }
+
+    function selectNone() {
+        document.querySelectorAll("#config-picker input[type=checkbox]").forEach((cb) => cb.checked = false);
+        updateSummary();
+    }
+
+    function updateSummary() {
+        const checked = document.querySelectorAll("#config-picker input[type=checkbox]:checked");
+        document.getElementById("config-summary").textContent = `${checked.length} selected`;
+    }
+
+    document.getElementById("bench-form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const agentId = document.getElementById("b-agent").value;
+        const mode = document.getElementById("b-mode").value;
+        const episodes = parseInt(document.getElementById("b-episodes").value, 10) || 1;
+        const maxSteps = parseInt(document.getElementById("b-max-steps").value, 10) || 100;
+        const showPreviews = document.getElementById("b-show-previews").checked;
+        const perfectMemory = document.getElementById("b-perfect-memory").checked;
+        const configs = Array.from(document.querySelectorAll("#config-picker input[type=checkbox]:checked")).map((cb) => cb.value);
+        if (!agentId) { toast("Pick an agent", "error"); return; }
+        if (configs.length === 0) { toast("Pick at least one config", "error"); return; }
+
+        const launchBtn = document.getElementById("b-launch");
+        launchBtn.disabled = true;
+        try {
+            const run = await api.post("/api/runs", {
+                agent_id: agentId,
+                mode: mode,
+                configs: configs,
+                episodes_per_config: episodes,
+                max_steps: maxSteps,
+                show_merge_previews: showPreviews,
+                perfect_memory: perfectMemory,
+            });
+            toast(`Run started: ${run.id}`, "ok");
+            setTimeout(() => { window.location.href = "/runs"; }, 600);
+        } catch (e) {
+            toastError(e);
+            launchBtn.disabled = false;
+        }
+    });
+
+    function applyBridgeState(s) {
+        const launch = document.getElementById("b-launch");
+        const hint = document.getElementById("b-launch-hint");
+        const noGameCard = document.getElementById("b-no-game-card");
+        if (s && s.game_connected) {
+            launch.disabled = false;
+            hint.textContent = "";
+            noGameCard.style.display = "none";
+        } else {
+            launch.disabled = true;
+            hint.textContent = "waiting for browser game…";
+            noGameCard.style.display = "block";
+        }
+    }
+
+    loadAgents();
+    loadConfigs();
+    window.YediApp.onBridgeStatusChange(applyBridgeState);
+})();
+</script>
+{% endblock %}

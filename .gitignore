@@ -70,3 +70,4 @@ __pycache__/
 # Runtime data
 scores.json
 logs/
+yedi_benchmark/data/

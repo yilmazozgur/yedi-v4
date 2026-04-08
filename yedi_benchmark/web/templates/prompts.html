@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-title">
+        <span>Prompts</span>
+        <button class="btn btn-primary" id="btn-new-prompt">+ New prompt</button>
+    </div>
+    <p class="card-sub">Exactly one prompt is global-active at a time. Runs snapshot the active prompt at start, so editing later does not retro-modify completed runs.</p>
+    <table class="table">
+        <thead><tr>
+            <th>Name</th><th>Version</th><th>Active</th><th>Dimension rules</th><th>Updated</th><th class="col-actions"></th>
+        </tr></thead>
+        <tbody id="prompts-tbody">
+            <tr><td colspan="6" class="empty-state">Loading…</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="modal-backdrop" id="prompt-modal" data-close-on-backdrop>
+    <div class="modal" onclick="event.stopPropagation()" style="width: 760px;">
+        <h3 class="modal-title" id="prompt-modal-title">New prompt</h3>
+        <form id="prompt-form">
+            <input type="hidden" id="pf-id">
+            <div class="form-row">
+                <label for="pf-name">Name</label>
+                <input id="pf-name" required>
+            </div>
+            <div class="form-row">
+                <label for="pf-version">Version</label>
+                <input id="pf-version" type="number" value="1" min="1">
+            </div>
+            <div class="form-row">
+                <label for="pf-core">Core rules</label>
+                <textarea id="pf-core" required style="min-height: 220px;"></textarea>
+            </div>
+            <div class="form-row">
+                <label for="pf-rules">Dimension rules (JSON object — key "field:mode" → rule text)</label>
+                <textarea id="pf-rules" style="min-height: 180px;" placeholder='{"number:add": "..."}'></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-ghost" id="btn-prompt-cancel">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="clone-modal" data-close-on-backdrop>
+    <div class="modal" onclick="event.stopPropagation()" style="width: 420px;">
+        <h3 class="modal-title">Clone prompt</h3>
+        <form id="clone-form">
+            <input type="hidden" id="clone-source-id">
+            <div class="form-row">
+                <label for="clone-name">New name</label>
+                <input id="clone-name" required>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-ghost" id="btn-clone-cancel">Cancel</button>
+                <button type="submit" class="btn btn-primary">Clone</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const { api, clear, escapeHtml, fmtDate, toast, toastError, openModal, closeModal } = window.YediApp;
+
+    async function loadPrompts() {
+        const tbody = document.getElementById("prompts-tbody");
+        try {
+            const prompts = await api.get("/api/prompts");
+            clear(tbody);
+            if (prompts.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="empty-state">No prompts yet.</td></tr>`;
+                return;
+            }
+            for (const p of prompts) {
+                const tr = document.createElement("tr");
+                const ruleCount = Object.keys(p.dimension_rules || {}).length;
+                tr.innerHTML = `
+                    <td>${escapeHtml(p.name)}</td>
+                    <td>v${p.version}</td>
+                    <td>${p.is_active ? '<span class="badge badge-active">active</span>' : '<span class="dim">—</span>'}</td>
+                    <td>${ruleCount}</td>
+                    <td class="col-mono">${fmtDate(p.updated_at)}</td>
+                    <td class="col-actions">
+                        ${p.is_active ? "" : `<button class="btn btn-sm" data-action="activate" data-id="${p.id}">Activate</button>`}
+                        <button class="btn btn-sm" data-action="clone" data-id="${p.id}">Clone</button>
+                        <button class="btn btn-sm" data-action="edit" data-id="${p.id}">Edit</button>
+                        <button class="btn btn-sm btn-danger" data-action="delete" data-id="${p.id}">Delete</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            }
+            tbody.querySelectorAll("button[data-action]").forEach((btn) => {
+                btn.addEventListener("click", () => onRowAction(btn.dataset.action, btn.dataset.id));
+            });
+        } catch (e) { toastError(e); }
+    }
+
+    async function onRowAction(action, id) {
+        try {
+            if (action === "activate") {
+                await api.post(`/api/prompts/${id}/activate`);
+                toast("Prompt activated", "ok");
+                loadPrompts();
+            } else if (action === "edit") {
+                const p = await api.get(`/api/prompts/${id}`);
+                openPromptForm(p);
+            } else if (action === "clone") {
+                document.getElementById("clone-source-id").value = id;
+                document.getElementById("clone-name").value = "";
+                openModal("clone-modal");
+            } else if (action === "delete") {
+                if (!confirm("Delete this prompt? Active prompt cannot be deleted.")) return;
+                await api.del(`/api/prompts/${id}`);
+                toast("Prompt deleted", "ok");
+                loadPrompts();
+            }
+        } catch (e) { toastError(e); }
+    }
+
+    function openPromptForm(p) {
+        document.getElementById("prompt-modal-title").textContent = p ? "Edit prompt" : "New prompt";
+        document.getElementById("pf-id").value      = p ? p.id : "";
+        document.getElementById("pf-name").value    = p ? p.name : "";
+        document.getElementById("pf-version").value = p ? p.version : 1;
+        document.getElementById("pf-core").value    = p ? p.core_rules : "";
+        document.getElementById("pf-rules").value   = p ? JSON.stringify(p.dimension_rules || {}, null, 2) : "{}";
+        openModal("prompt-modal");
+    }
+
+    document.getElementById("btn-new-prompt").addEventListener("click", () => openPromptForm(null));
+    document.getElementById("btn-prompt-cancel").addEventListener("click", () => closeModal("prompt-modal"));
+    document.getElementById("btn-clone-cancel").addEventListener("click", () => closeModal("clone-modal"));
+
+    document.getElementById("prompt-form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const id = document.getElementById("pf-id").value;
+        let dimensionRules = {};
+        const raw = document.getElementById("pf-rules").value.trim();
+        if (raw) {
+            try { dimensionRules = JSON.parse(raw); }
+            catch (e) { toast("Dimension rules JSON is invalid: " + e.message, "error"); return; }
+            if (typeof dimensionRules !== "object" || Array.isArray(dimensionRules)) {
+                toast("Dimension rules must be a JSON object", "error"); return;
+            }
+        }
+        const body = {
+            name: document.getElementById("pf-name").value.trim(),
+            core_rules: document.getElementById("pf-core").value,
+            dimension_rules: dimensionRules,
+            version: parseInt(document.getElementById("pf-version").value, 10) || 1,
+        };
+        try {
+            if (id) await api.put(`/api/prompts/${id}`, body);
+            else    await api.post("/api/prompts", body);
+            toast(id ? "Prompt updated" : "Prompt created", "ok");
+            closeModal("prompt-modal");
+            loadPrompts();
+        } catch (e) { toastError(e); }
+    });
+
+    document.getElementById("clone-form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const id = document.getElementById("clone-source-id").value;
+        const newName = document.getElementById("clone-name").value.trim();
+        if (!newName) return;
+        try {
+            await api.post(`/api/prompts/${id}/clone`, { new_name: newName });
+            toast("Prompt cloned", "ok");
+            closeModal("clone-modal");
+            loadPrompts();
+        } catch (e) { toastError(e); }
+    });
+
+    loadPrompts();
+})();
+</script>
+{% endblock %}

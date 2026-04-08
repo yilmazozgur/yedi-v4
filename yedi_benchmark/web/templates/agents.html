@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-title">
+        <span>Agents</span>
+        <button class="btn btn-primary" id="btn-new-agent">+ New agent</button>
+    </div>
+    <p class="card-sub">Each agent points at one provider/model. API keys are stored as environment variable names — never as raw values.</p>
+    <table class="table">
+        <thead><tr>
+            <th>Name</th><th>Provider</th><th>Model</th><th>Vision</th><th>API key env</th><th>Tokens</th><th class="col-actions"></th>
+        </tr></thead>
+        <tbody id="agents-tbody">
+            <tr><td colspan="7" class="empty-state">Loading…</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="modal-backdrop" id="agent-modal" data-close-on-backdrop>
+    <div class="modal" onclick="event.stopPropagation()">
+        <h3 class="modal-title" id="agent-modal-title">New agent</h3>
+        <form id="agent-form">
+            <input type="hidden" id="f-agent-id">
+            <div class="form-grid">
+                <div class="form-row">
+                    <label for="f-name">Name</label>
+                    <input id="f-name" name="name" required placeholder="Claude Sonnet 4.5">
+                </div>
+                <div class="form-row">
+                    <label for="f-provider">Provider</label>
+                    <select id="f-provider" name="provider" required></select>
+                </div>
+                <div class="form-row">
+                    <label for="f-model">Model</label>
+                    <input id="f-model" name="model" list="model-options" placeholder="claude-sonnet-4-5">
+                    <datalist id="model-options"></datalist>
+                </div>
+                <div class="form-row">
+                    <label for="f-api-key-env">API key env var</label>
+                    <input id="f-api-key-env" name="api_key_env" placeholder="ANTHROPIC_API_KEY">
+                </div>
+                <div class="form-row">
+                    <label for="f-base-url">Base URL (optional)</label>
+                    <input id="f-base-url" name="base_url" placeholder="https://api.openai.com/v1">
+                </div>
+                <div class="form-row">
+                    <label for="f-max-tokens">Max tokens</label>
+                    <input id="f-max-tokens" name="max_tokens" type="number" value="512" min="1">
+                </div>
+                <div class="form-row">
+                    <label><input id="f-vision" name="supports_vision" type="checkbox"> Supports vision</label>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-ghost" id="btn-cancel">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="btn-save">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const { api, el, clear, escapeHtml, toast, toastError, openModal, closeModal } = window.YediApp;
+
+    let providerInfo = { providers: [], default_models: {}, default_api_key_envs: {} };
+
+    async function loadProviders() {
+        providerInfo = await api.get("/api/agents/providers");
+        const sel = document.getElementById("f-provider");
+        clear(sel);
+        for (const p of providerInfo.providers) {
+            const opt = document.createElement("option");
+            opt.value = p; opt.textContent = p;
+            sel.appendChild(opt);
+        }
+        sel.addEventListener("change", onProviderChange);
+    }
+
+    function onProviderChange() {
+        const provider = document.getElementById("f-provider").value;
+        const dl = document.getElementById("model-options");
+        clear(dl);
+        for (const m of (providerInfo.default_models[provider] || [])) {
+            const opt = document.createElement("option");
+            opt.value = m;
+            dl.appendChild(opt);
+        }
+        const envInput = document.getElementById("f-api-key-env");
+        if (!envInput.value) {
+            envInput.value = providerInfo.default_api_key_envs[provider] || "";
+        }
+    }
+
+    async function loadAgents() {
+        const tbody = document.getElementById("agents-tbody");
+        try {
+            const agents = await api.get("/api/agents");
+            clear(tbody);
+            if (agents.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No agents defined yet.</td></tr>`;
+                return;
+            }
+            for (const a of agents) {
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td>${escapeHtml(a.name)}</td>
+                    <td><span class="badge badge-meta">${escapeHtml(a.provider)}</span></td>
+                    <td class="col-mono">${escapeHtml(a.model || "—")}</td>
+                    <td>${a.supports_vision ? '<span class="badge badge-vision">vision</span>' : '<span class="dim">—</span>'}</td>
+                    <td class="col-mono">${escapeHtml(a.api_key_env || "—")}</td>
+                    <td>${a.max_tokens}</td>
+                    <td class="col-actions">
+                        <button class="btn btn-sm" data-action="test" data-id="${a.id}">Test</button>
+                        <button class="btn btn-sm" data-action="edit" data-id="${a.id}">Edit</button>
+                        <button class="btn btn-sm btn-danger" data-action="delete" data-id="${a.id}">Delete</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            }
+            tbody.querySelectorAll("button[data-action]").forEach((btn) => {
+                btn.addEventListener("click", () => onRowAction(btn.dataset.action, btn.dataset.id));
+            });
+        } catch (e) { toastError(e); }
+    }
+
+    async function onRowAction(action, id) {
+        if (action === "test") {
+            try {
+                const res = await api.post(`/api/agents/${id}/test`);
+                toast(res.message, res.success ? "ok" : "error");
+            } catch (e) { toastError(e); }
+        } else if (action === "edit") {
+            try {
+                const a = await api.get(`/api/agents/${id}`);
+                openAgentForm(a);
+            } catch (e) { toastError(e); }
+        } else if (action === "delete") {
+            if (!confirm("Delete this agent?")) return;
+            try {
+                await api.del(`/api/agents/${id}`);
+                toast("Agent deleted", "ok");
+                loadAgents();
+            } catch (e) { toastError(e); }
+        }
+    }
+
+    function openAgentForm(a) {
+        document.getElementById("agent-modal-title").textContent = a ? "Edit agent" : "New agent";
+        document.getElementById("f-agent-id").value    = a ? a.id : "";
+        document.getElementById("f-name").value        = a ? a.name : "";
+        document.getElementById("f-provider").value    = a ? a.provider : (providerInfo.providers[0] || "");
+        document.getElementById("f-model").value       = a ? (a.model || "") : "";
+        document.getElementById("f-api-key-env").value = a ? (a.api_key_env || "") : "";
+        document.getElementById("f-base-url").value    = a ? (a.base_url || "") : "";
+        document.getElementById("f-max-tokens").value  = a ? a.max_tokens : 512;
+        document.getElementById("f-vision").checked    = a ? !!a.supports_vision : false;
+        onProviderChange();
+        openModal("agent-modal");
+    }
+
+    document.getElementById("btn-new-agent").addEventListener("click", () => openAgentForm(null));
+    document.getElementById("btn-cancel").addEventListener("click", () => closeModal("agent-modal"));
+
+    document.getElementById("agent-form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const id = document.getElementById("f-agent-id").value;
+        const body = {
+            name:            document.getElementById("f-name").value.trim(),
+            provider:        document.getElementById("f-provider").value,
+            model:           document.getElementById("f-model").value.trim(),
+            api_key_env:     document.getElementById("f-api-key-env").value.trim() || null,
+            base_url:        document.getElementById("f-base-url").value.trim() || null,
+            max_tokens:      parseInt(document.getElementById("f-max-tokens").value, 10) || 512,
+            supports_vision: document.getElementById("f-vision").checked,
+        };
+        try {
+            if (id) await api.put(`/api/agents/${id}`, body);
+            else    await api.post("/api/agents", body);
+            toast(id ? "Agent updated" : "Agent created", "ok");
+            closeModal("agent-modal");
+            loadAgents();
+        } catch (e) { toastError(e); }
+    });
+
+    (async function init() {
+        await loadProviders();
+        loadAgents();
+    })();
+})();
+</script>
+{% endblock %}

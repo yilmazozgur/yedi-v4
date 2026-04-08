@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="stat-grid" id="home-stats">
+    <div class="stat"><div class="stat-value" id="stat-agents">—</div><div class="stat-label">Agents</div></div>
+    <div class="stat"><div class="stat-value" id="stat-prompts">—</div><div class="stat-label">Prompts</div></div>
+    <div class="stat"><div class="stat-value" id="stat-runs">—</div><div class="stat-label">Total runs</div></div>
+    <div class="stat"><div class="stat-value" id="stat-completed">—</div><div class="stat-label">Completed</div></div>
+</div>
+
+<div class="card">
+    <div class="card-title">Recent runs</div>
+    <table class="table">
+        <thead><tr>
+            <th>Status</th><th>Agent</th><th>Prompt</th><th>Configs</th><th>Episodes</th><th>Started</th><th class="col-actions"></th>
+        </tr></thead>
+        <tbody id="recent-runs">
+            <tr><td colspan="7" class="empty-state">Loading…</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <div class="card-title">Quick links</div>
+    <p class="muted">
+        Define <a href="/agents">agents</a>, edit the active <a href="/prompts">prompt</a>,
+        then launch a <a href="/benchmark">benchmark</a>. Watch runs on the <a href="/runs">runs</a> page
+        and inspect results in <a href="/analysis">analysis</a>.
+    </p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(async function () {
+    const { api, el, clear, escapeHtml, fmtDate, toastError } = window.YediApp;
+
+    function statusBadge(status) {
+        const cls = "badge badge-" + status;
+        return `<span class="${cls}">${escapeHtml(status)}</span>`;
+    }
+
+    async function refresh() {
+        try {
+            const [agents, prompts, runs] = await Promise.all([
+                api.get("/api/agents"),
+                api.get("/api/prompts"),
+                api.get("/api/runs"),
+            ]);
+            document.getElementById("stat-agents").textContent = agents.length;
+            document.getElementById("stat-prompts").textContent = prompts.length;
+            document.getElementById("stat-runs").textContent = runs.length;
+            document.getElementById("stat-completed").textContent =
+                runs.filter((r) => r.status === "completed").length;
+
+            const tbody = document.getElementById("recent-runs");
+            clear(tbody);
+            const recent = runs.slice()
+                .sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))
+                .slice(0, 10);
+            if (recent.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No runs yet. Launch one from the Benchmark page.</td></tr>`;
+                return;
+            }
+            for (const r of recent) {
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td>${statusBadge(r.status)}</td>
+                    <td>${escapeHtml(r.agent_snapshot && r.agent_snapshot.name || "—")}</td>
+                    <td>${escapeHtml(r.prompt_snapshot && r.prompt_snapshot.name || "—")}</td>
+                    <td>${(r.configs || []).length}</td>
+                    <td>${r.episodes_per_config || 0}</td>
+                    <td class="col-mono">${fmtDate(r.started_at)}</td>
+                    <td class="col-actions"><a class="btn btn-sm" href="/runs">View</a></td>
+                `;
+                tbody.appendChild(tr);
+            }
+        } catch (e) { toastError(e); }
+    }
+
+    refresh();
+    window.YediApp.onActiveRunChange(refresh);
+})();
+</script>
+{% endblock %}

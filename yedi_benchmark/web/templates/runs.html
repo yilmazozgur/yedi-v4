@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-title">
+        <span>Runs</span>
+        <button class="btn btn-sm btn-ghost" id="btn-refresh">Refresh</button>
+    </div>
+    <table class="table">
+        <thead><tr>
+            <th>Status</th><th>Agent</th><th>Prompt</th><th>Mode</th><th>Configs</th>
+            <th>Episodes</th><th>Started</th><th class="col-actions"></th>
+        </tr></thead>
+        <tbody id="runs-tbody">
+            <tr><td colspan="8" class="empty-state">Loading…</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card" id="run-detail-card" style="display: none;">
+    <div class="card-title">
+        <span>Run detail</span>
+        <button class="btn btn-sm btn-ghost" id="btn-close-detail">Close</button>
+    </div>
+    <div id="run-detail"></div>
+</div>
+
+<div class="card" id="run-trace-card" style="display: none;">
+    <div class="card-title">
+        <span>Live LLM trace</span>
+        <span class="dim mono" id="trace-status"></span>
+    </div>
+    <div id="trace-system-host"></div>
+    <div class="trace-stream" id="trace-stream">
+        <div class="trace-empty">Waiting for the model's first move…</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const { api, clear, escapeHtml, fmtDate, fmtNum, toast, toastError } = window.YediApp;
+
+    // ─── Trace polling state ────────────────────────────────────────────
+    let traceRunId = null;
+    let traceCursor = 0;
+    let traceTimer = null;
+    let traceStreamEl = null;
+    let traceAutoScroll = true;
+    let traceSeenConfigs = new Set();
+
+    function statusBadge(status) {
+        return `<span class="badge badge-${escapeHtml(status)}">${escapeHtml(status)}</span>`;
+    }
+
+    function ablationBadges(r) {
+        const out = [];
+        if (r.show_merge_previews) {
+            out.push(`<span class="badge badge-meta" title="LLM saw the bridge's pre-computed merge_previews block">+previews</span>`);
+        }
+        if (r.perfect_memory) {
+            out.push(`<span class="badge badge-meta" title="Memory dimension masking disabled — bridge shipped hidden card values">+perfect-mem</span>`);
+        }
+        return out.join(" ");
+    }
+
+    async function loadRuns() {
+        const tbody = document.getElementById("runs-tbody");
+        try {
+            const runs = await api.get("/api/runs");
+            clear(tbody);
+            if (runs.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" class="empty-state">No runs yet.</td></tr>`;
+                return;
+            }
+            const sorted = runs.slice().sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""));
+            for (const r of sorted) {
+                const tr = document.createElement("tr");
+                const done = Object.values(r.results || {}).reduce((acc, c) => acc + (c.episodes || []).length, 0);
+                const total = (r.configs || []).length * (r.episodes_per_config || 0);
+                tr.innerHTML = `
+                    <td>${statusBadge(r.status)}</td>
+                    <td>${escapeHtml(r.agent_snapshot && r.agent_snapshot.name || "—")}</td>
+                    <td>${escapeHtml(r.prompt_snapshot && r.prompt_snapshot.name || "—")}</td>
+                    <td><span class="badge badge-meta">${escapeHtml(r.mode)}</span> ${ablationBadges(r)}</td>
+                    <td>${(r.configs || []).length}</td>
+                    <td class="col-mono">${done}/${total}</td>
+                    <td class="col-mono">${fmtDate(r.started_at)}</td>
+                    <td class="col-actions">
+                        <button class="btn btn-sm" data-action="view" data-id="${r.id}">View</button>
+                        ${r.status === "running" ? `<button class="btn btn-sm btn-danger" data-action="cancel" data-id="${r.id}">Cancel</button>` : ""}
+                        <button class="btn btn-sm btn-danger" data-action="delete" data-id="${r.id}">Delete</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            }
+            tbody.querySelectorAll("button[data-action]").forEach((btn) => {
+                btn.addEventListener("click", () => onRowAction(btn.dataset.action, btn.dataset.id));
+            });
+        } catch (e) { toastError(e); }
+    }
+
+    async function onRowAction(action, id) {
+        try {
+            if (action === "view") {
+                const r = await api.get(`/api/runs/${id}`);
+                renderDetail(r);
+                startTrace(id, r.status);
+            } else if (action === "cancel") {
+                if (!confirm("Cancel this run?")) return;
+                await api.post(`/api/runs/${id}/cancel`);
+                toast("Cancellation requested", "ok");
+                loadRuns();
+            } else if (action === "delete") {
+                if (!confirm("Delete this run record?")) return;
+                await api.del(`/api/runs/${id}`);
+                toast("Run deleted", "ok");
+                stopTrace();
+                document.getElementById("run-detail-card").style.display = "none";
+                document.getElementById("run-trace-card").style.display = "none";
+                loadRuns();
+            }
+        } catch (e) { toastError(e); }
+    }
+
+    function renderDetail(r) {
+        const card = document.getElementById("run-detail-card");
+        const host = document.getElementById("run-detail");
+        const rows = [];
+        rows.push(`<div class="spread"><strong class="mono">${escapeHtml(r.id)}</strong> ${statusBadge(r.status)} ${ablationBadges(r)}</div>`);
+        rows.push(`<p class="muted">Agent: ${escapeHtml(r.agent_snapshot && r.agent_snapshot.name || "—")} ·
+                   Prompt: ${escapeHtml(r.prompt_snapshot && r.prompt_snapshot.name || "—")} v${r.prompt_snapshot && r.prompt_snapshot.version || "?"} ·
+                   Mode: ${escapeHtml(r.mode)} ·
+                   ${r.episodes_per_config} ep/config ·
+                   ${fmtDate(r.started_at)} → ${fmtDate(r.finished_at)}</p>`);
+        if (r.error) {
+            rows.push(`<p class="badge badge-failed">${escapeHtml(r.error)}</p>`);
+        }
+        rows.push(`<table class="table"><thead><tr><th>Config</th><th>Episodes</th><th>Mean max mana</th><th>Best</th><th>Std</th></tr></thead><tbody>`);
+        for (const cfgName of (r.configs || [])) {
+            const cr = (r.results || {})[cfgName];
+            if (cr) {
+                rows.push(`<tr>
+                    <td class="col-mono">${escapeHtml(cfgName)}</td>
+                    <td>${(cr.episodes || []).length}/${r.episodes_per_config}</td>
+                    <td>${fmtNum(cr.mean_max_mana)}</td>
+                    <td>${fmtNum(cr.best_max_mana)}</td>
+                    <td>${fmtNum(cr.std_max_mana)}</td>
+                </tr>`);
+            } else {
+                rows.push(`<tr><td class="col-mono">${escapeHtml(cfgName)}</td><td colspan="4" class="dim">pending</td></tr>`);
+            }
+        }
+        rows.push("</tbody></table>");
+        host.innerHTML = rows.join("");
+        card.style.display = "block";
+    }
+
+    // ─── Live trace ─────────────────────────────────────────────────────
+
+    function startTrace(runId, status) {
+        stopTrace();
+        traceRunId = runId;
+        traceCursor = 0;
+        traceSeenConfigs = new Set();
+        traceAutoScroll = true;
+
+        const card = document.getElementById("run-trace-card");
+        card.style.display = "block";
+        document.getElementById("trace-system-host").innerHTML = "";
+        traceStreamEl = document.getElementById("trace-stream");
+        traceStreamEl.innerHTML = `<div class="trace-empty">Waiting for the model's first move…</div>`;
+
+        // Track manual scroll so we don't yank the user back to the bottom
+        traceStreamEl.addEventListener("scroll", onTraceScroll);
+
+        pollTrace();
+        // Faster polling while running, slower if already finished
+        const interval = (status === "running" || status === "pending") ? 1000 : 3000;
+        traceTimer = setInterval(pollTrace, interval);
+    }
+
+    function stopTrace() {
+        if (traceTimer) { clearInterval(traceTimer); traceTimer = null; }
+        if (traceStreamEl) traceStreamEl.removeEventListener("scroll", onTraceScroll);
+        traceRunId = null;
+        traceCursor = 0;
+    }
+
+    function onTraceScroll() {
+        if (!traceStreamEl) return;
+        const nearBottom = traceStreamEl.scrollHeight - traceStreamEl.scrollTop - traceStreamEl.clientHeight < 40;
+        traceAutoScroll = nearBottom;
+    }
+
+    async function pollTrace() {
+        if (!traceRunId) return;
+        try {
+            const data = await api.get(`/api/runs/${traceRunId}/trace?since=${traceCursor}`);
+            renderSystemPrompts(data.system_prompts || {});
+            if (!data.available && (!data.entries || data.entries.length === 0) && traceCursor === 0) {
+                // Random agent or trace not yet started
+                traceStreamEl.innerHTML = `<div class="trace-empty">No LLM trace for this run (random agent or still warming up).</div>`;
+            }
+            if (data.entries && data.entries.length > 0) {
+                if (traceCursor === 0) traceStreamEl.innerHTML = "";
+                for (const e of data.entries) appendEntry(e);
+                traceCursor = data.cursor;
+                if (traceAutoScroll) traceStreamEl.scrollTop = traceStreamEl.scrollHeight;
+            }
+            // Stop polling once the run leaves the running state and we've drained
+            const r = await api.get(`/api/runs/${traceRunId}`);
+            const label = `${data.entries ? traceCursor : 0} exchanges · ${r.status}`;
+            document.getElementById("trace-status").textContent = label;
+            if (r.status !== "running" && r.status !== "pending" && traceTimer) {
+                // One last poll has happened — slow the loop down
+                clearInterval(traceTimer);
+                traceTimer = setInterval(pollTrace, 5000);
+            }
+        } catch (e) {
+            // soft fail; trace is best-effort
+            console.warn("trace poll failed", e);
+        }
+    }
+
+    function renderSystemPrompts(map) {
+        const host = document.getElementById("trace-system-host");
+        const cfgs = Object.keys(map).sort();
+        if (cfgs.length === 0) { host.innerHTML = ""; return; }
+        // Only re-render if the set of configs grew
+        const sig = cfgs.join("|");
+        if (host.dataset.sig === sig) return;
+        host.dataset.sig = sig;
+        const html = cfgs.map((cfg) => `
+            <details class="trace-system">
+                <summary>System prompt — ${escapeHtml(cfg)}</summary>
+${escapeHtml(map[cfg])}
+            </details>
+        `).join("");
+        host.innerHTML = html;
+    }
+
+    function appendEntry(e) {
+        const row = document.createElement("div");
+        row.className = "trace-row" + (e.error ? " is-error" : "");
+        const latency = e.latency_ms != null ? `${Math.round(e.latency_ms)} ms` : "—";
+        const actionLabel = e.action != null ? `action ${e.action}` : "—";
+        row.innerHTML = `
+            <div class="trace-meta">
+                <span>${escapeHtml(e.config || "—")} · ep ${e.episode} · step ${e.step}</span>
+                <span><span class="trace-action">${escapeHtml(actionLabel)}</span> · ${latency}</span>
+            </div>
+            <div>
+                <div class="trace-pane-label">Input (game state → model)</div>
+                <div class="trace-pane">${escapeHtml(e.user_text || "")}</div>
+            </div>
+            <div>
+                <div class="trace-pane-label">Output (model response)</div>
+                <div class="trace-pane is-output">${e.error ? `<strong>error:</strong> ${escapeHtml(e.error)}` : escapeHtml(e.response || "")}</div>
+            </div>
+        `;
+        traceStreamEl.appendChild(row);
+    }
+
+    document.getElementById("btn-refresh").addEventListener("click", loadRuns);
+    document.getElementById("btn-close-detail").addEventListener("click", () => {
+        document.getElementById("run-detail-card").style.display = "none";
+        document.getElementById("run-trace-card").style.display = "none";
+        stopTrace();
+    });
+
+    loadRuns();
+    window.YediApp.onActiveRunChange(loadRuns);
+})();
+</script>
+{% endblock %}

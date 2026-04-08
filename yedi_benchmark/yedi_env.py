@@ -29,10 +29,21 @@ import numpy as np
 
 try:
     import websockets
+    from websockets.exceptions import ConnectionClosed
 except ImportError:
     websockets = None
+    ConnectionClosed = Exception  # type: ignore[assignment,misc]
 
 logger = logging.getLogger("yedi_env")
+
+
+class BridgeDisconnectedError(RuntimeError):
+    """Raised when the WebSocket bridge to the browser game has died.
+
+    Distinct from generic Exception so the runner can mark the run FAILED
+    with a clear, actionable message instead of cryptic websockets internals
+    like 'no close frame received or sent'.
+    """
 
 # Action space constants
 NUM_ACTIONS = 38
@@ -147,7 +158,13 @@ class YediEnv(gym.Env):
         logger.info(f"Connected to {self.server_url}")
 
     def _send_command(self, command: dict, timeout: float = 30.0) -> dict:
-        """Send a command and wait for the response."""
+        """Send a command and wait for the response.
+
+        Raises:
+            BridgeDisconnectedError: when the WebSocket bridge dies (browser
+                tab closed, ASGI socket already shut down, etc.) or when the
+                server forwards a bridge-level error response.
+        """
         self._ensure_connected()
 
         async def _do():
@@ -155,7 +172,27 @@ class YediEnv(gym.Env):
             raw = await asyncio.wait_for(self._ws.recv(), timeout)
             return json.loads(raw)
 
-        return self._loop.run_until_complete(_do())
+        try:
+            response = self._loop.run_until_complete(_do())
+        except ConnectionClosed as e:
+            # Drop the dead socket so the next call doesn't try to reuse it.
+            self._ws = None
+            raise BridgeDisconnectedError(
+                f"WebSocket bridge to game closed: {e}"
+            ) from e
+        except asyncio.TimeoutError as e:
+            raise BridgeDisconnectedError(
+                f"timed out waiting for {command.get('type')} response after {timeout}s"
+            ) from e
+
+        # Server-side bridge errors come back as {"error": "...", "seq": ...}.
+        # The "ok" path always carries a state field (mana, type, etc.) instead.
+        if isinstance(response, dict) and "error" in response and "mana" not in response:
+            raise BridgeDisconnectedError(
+                f"bridge error for {command.get('type')}: {response.get('error')}"
+            )
+
+        return response
 
     # ------------------------------------------------------------------
     # Gymnasium interface
@@ -195,6 +232,12 @@ class YediEnv(gym.Env):
         # Step-based game limit — Unity disables the timer and counts actions
         if self.max_steps > 0:
             start_cmd["max_steps"] = self.max_steps
+
+        # Per-run ablation: when game_config asks for perfect_memory, tell the
+        # bridge to stop masking hidden card values + previews. Off by default
+        # so the canonical Memory dimension behaviour is preserved.
+        if self.game_config.get("perfect_memory"):
+            start_cmd["perfect_memory"] = True
 
         self._send_command(start_cmd)
 
@@ -368,3 +411,35 @@ class YediEnv(gym.Env):
         else:
             state_resp = self._send_command({"type": "get_state"})
             self._state = state_resp
+
+    # ------------------------------------------------------------------
+    # Merge preview (greedy agent baseline)
+    # ------------------------------------------------------------------
+
+    def preview_merge(self, source: str, target: str) -> dict:
+        """Score a candidate merge WITHOUT committing it.
+
+        Calls the bridge's preview_merge command, which delegates to the same
+        ComputeMerge*Gain functions that the real merge code uses, so the
+        preview is guaranteed to match the actual scoring.
+
+        Args:
+            source: name of the slot holding the moving card ("new" or "1".."5")
+            target: name of the slot the card would land on ("1".."5"). Must
+                    be currently occupied (a place-into-empty has no merge to
+                    score).
+
+        Returns:
+            dict with per-dimension gain tiers (number/color/shape/word_gain),
+            each in {-1, 0, 1, 2, 3} where -1=bad, 0=neutral or inactive,
+            1=ok, 2=great, 3=perfect. Plus target_can_accept_merge (False if
+            the target card has already hit its 3-merge cap).
+
+        Raises:
+            BridgeDisconnectedError: on the same conditions as _send_command.
+        """
+        return self._send_command({
+            "type": "preview_merge",
+            "source": source,
+            "target": target,
+        })

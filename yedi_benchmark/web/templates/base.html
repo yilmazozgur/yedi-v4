@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Yedi Benchmark · {{ page_title }}</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-title">YEDI</div>
+                <div class="brand-sub">AI Benchmark</div>
+            </div>
+            <nav class="nav">
+                {% for page in pages %}
+                <a href="{{ page.path }}"
+                   class="nav-link {% if page.slug == active_slug %}is-active{% endif %}"
+                   {% if page.slug == 'game' %}target="_self"{% endif %}>
+                    {{ page.title }}
+                </a>
+                {% endfor %}
+            </nav>
+            <div class="run-status" id="bridge-status">
+                <div class="run-status-label">Game bridge</div>
+                <div class="run-status-body" id="bridge-status-body">checking…</div>
+            </div>
+            <div class="run-status" id="run-status">
+                <div class="run-status-label">Active run</div>
+                <div class="run-status-body" id="run-status-body">—</div>
+            </div>
+        </aside>
+        <main class="content">
+            <header class="page-header">
+                <h1>{{ page_title }}</h1>
+                <div id="toast-host" class="toast-host"></div>
+            </header>
+            <section class="page-body">
+                {% block content %}{% endblock %}
+            </section>
+        </main>
+    </div>
+    <script src="/static/js/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

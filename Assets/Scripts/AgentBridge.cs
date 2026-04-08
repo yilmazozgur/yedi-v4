@@ -45,6 +45,14 @@ public class AgentBridge : MonoBehaviour
     int maxSteps = 0;
     int actionCount = 0;
 
+    // When false (default), the bridge respects MemoryCard.hidden — slot dim
+    // values are nulled out and merge_previews entries that touch a hidden
+    // card are dropped, so the agent must actually remember card identity.
+    // Set true to opt into a "perfect memory" ablation where the bridge ships
+    // every value regardless of the hidden flag. Configured per-run via
+    // start_game.perfect_memory.
+    bool perfectMemory = false;
+
     // Auto-create the AgentBridge at startup — no manual scene setup needed
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void AutoCreate()
@@ -245,6 +253,9 @@ public class AgentBridge : MonoBehaviour
             case "get_valid_actions":
                 SendValidActions(cmd.seq);
                 break;
+            case "preview_merge":
+                ExecutePreviewMerge(cmd);
+                break;
             case "start_game":
                 ExecuteStartGame(cmd);
                 break;
@@ -319,12 +330,58 @@ public class AgentBridge : MonoBehaviour
         cardIdCounter++;
         IncrementAction();
 
-        // Card creation spans 3 frames: Card.Awake → Card.Start(creates CardFrame) → CardFrame.Update(ActivateComponents)
-        // Wait 4 frames to ensure all initialization is complete before reading state
+        // Card creation spans multiple frames: Card.Awake → Card.Start (creates
+        // CardFrame) → CardFrame.Awake → CardFrame.Start (resolves child cards) →
+        // CardFrame.Update (calls ActivateComponents). A fixed-frame wait was
+        // racy — sometimes the bridge serialized a card whose numberSelected was
+        // still the -1000 sentinel and the agent saw a "blank" card. We now poll
+        // the slot every frame and call EnsureActivated() so the state read is
+        // never half-initialized.
         if (IsStepLimitReached())
-            StartCoroutine(EndGameAfterFrames(cmd.seq, 4));
+            StartCoroutine(EndGameAfterDrawReady(cmd.seq));
         else
-            StartCoroutine(SendStateAfterFrames(cmd.seq, 4));
+            StartCoroutine(SendStateAfterDrawReady(cmd.seq));
+    }
+
+    IEnumerator WaitForDrawReady(int maxFrames = 20)
+    {
+        // Wait until SlotNew has a card whose CardFrame has been initialized
+        // (CardFrame.Start populated child cards and ActivateComponents has
+        // run), bounded so a stuck draw doesn't hang the bridge forever.
+        // We can't just poll numberCard.numberSelected because color/shape/word
+        // -only modes legitimately leave the number sentinel as -1000.
+        for (int i = 0; i < maxFrames; i++)
+        {
+            yield return null;
+            if (slotNew == null || !slotNew.GetFilledInfo()) continue;
+            Card card = slotNew.GetCardObject();
+            if (card == null) continue;
+            CardFrame frame = card.GetCardFrame();
+            if (frame == null) continue;
+            // Force activation if Start has resolved the dimension components.
+            frame.EnsureActivated();
+            if (frame.IsInitialized) yield break;
+        }
+        Debug.LogWarning("[AgentBridge] WaitForDrawReady gave up after " + maxFrames + " frames");
+    }
+
+    IEnumerator SendStateAfterDrawReady(int seq)
+    {
+        yield return WaitForDrawReady();
+        TryCacheReferences();
+        SendState(seq);
+    }
+
+    IEnumerator EndGameAfterDrawReady(int seq)
+    {
+        yield return WaitForDrawReady();
+        TryCacheReferences();
+        SendState(seq);
+        yield return null;
+        if (levelController != null)
+            levelController.BackButtonPressed();
+        else
+            SceneManager.LoadScene("Scene Selection Screen");
     }
 
     void ExecuteMoveCard(AgentCommand cmd)
@@ -413,6 +470,138 @@ public class AgentBridge : MonoBehaviour
             StartCoroutine(SendStateAfterFrames(cmd.seq, 2));
     }
 
+    // Preview a merge WITHOUT committing it. Used by the greedy agent baseline
+    // (and eventually by the merge_preview observation field) to score every
+    // candidate merge before picking one. We delegate to the same
+    // ComputeMerge*Gain functions the real merge code calls, so the preview is
+    // guaranteed to match the actual scoring without any drift.
+    //
+    // Convention matches CardFrame.AnimateGain:
+    //   - cmd.source is the moving card (the one being dragged)
+    //   - cmd.target is the slot it would land on (must be occupied)
+    //   - per-dim gain returned as the SAME tier values the gain functions
+    //     return: -1 = bad, 0 = neutral / inactive, 1 = ok, 2 = great, 3 = perfect
+    void ExecutePreviewMerge(AgentCommand cmd)
+    {
+        if (!refsReady)
+        {
+            SendError(cmd.seq, "Game not ready");
+            return;
+        }
+
+        SlotGeneric sourceSlot = GetSlotByName(cmd.source);
+        SlotGeneric targetSlot = GetSlotByName(cmd.target);
+        if (sourceSlot == null)
+        {
+            SendError(cmd.seq, "Invalid source slot: " + cmd.source);
+            return;
+        }
+        if (targetSlot == null)
+        {
+            SendError(cmd.seq, "Invalid target slot: " + cmd.target);
+            return;
+        }
+        if (sourceSlot == targetSlot)
+        {
+            SendError(cmd.seq, "Source and target are the same slot");
+            return;
+        }
+        if (!sourceSlot.GetFilledInfo() || !targetSlot.GetFilledInfo())
+        {
+            SendError(cmd.seq, "Both source and target must be occupied for a merge preview");
+            return;
+        }
+
+        CardFrame sourceFrame = GetCardFrame(sourceSlot);
+        CardFrame targetFrame = GetCardFrame(targetSlot);
+        if (sourceFrame == null || targetFrame == null)
+        {
+            SendError(cmd.seq, "Missing card object or CardFrame on source/target");
+            return;
+        }
+
+        // Force activation so a freshly-drawn source card with sentinel values
+        // doesn't return spurious 0-gains.
+        sourceFrame.EnsureActivated();
+        targetFrame.EnsureActivated();
+
+        var msg = new MergePreviewMsg();
+        msg.seq = cmd.seq;
+        msg.type = "merge_preview";
+        msg.source = cmd.source;
+        msg.target = cmd.target;
+
+        ComputeMergeGains(sourceFrame, targetFrame,
+            out msg.number_gain, out msg.color_gain, out msg.shape_gain, out msg.word_gain);
+
+        // Whether the target card has any merges left. The greedy agent uses
+        // this to skip merges that would be rejected by the game.
+        msg.target_merges_done = targetFrame.numberOfMerges;
+        msg.target_merges_max = targetFrame.maxNumberOfMerges;
+        msg.target_can_accept_merge =
+            (targetFrame.numberOfMerges < targetFrame.maxNumberOfMerges);
+
+        SendToServer(JsonUtility.ToJson(msg));
+    }
+
+    // Pure helper: pull the CardFrame off a SlotGeneric, or null if anything is
+    // missing. Used by both ExecutePreviewMerge and the per-state merge preview
+    // batch in SerializeGameState.
+    CardFrame GetCardFrame(SlotGeneric slot)
+    {
+        if (slot == null) return null;
+        Card card = slot.GetCardObject();
+        if (card == null) return null;
+        return card.GetCardFrame();
+    }
+
+    // Mirrors the hidden detection in SerializeSlot — when MemoryCard is on
+    // and the background sprite has been raised above the dim layers, the
+    // card face is hidden from the player and we treat it as opaque to the
+    // agent too. Used by ComputeMergePreviews to drop entries that would
+    // otherwise leak the underlying card identity through the gain math.
+    bool IsCardHidden(CardFrame frame)
+    {
+        if (frame == null || frame.memoryCard == null) return false;
+        var bg = frame.GetComponentInChildren<CardFrameBackground>();
+        if (bg == null) return false;
+        var sr = bg.GetComponent<SpriteRenderer>();
+        return sr != null && sr.sortingOrder >= 13;
+    }
+
+    // Compute the per-dimension gain tier for a hypothetical merge, using the
+    // SAME ComputeMerge*Gain functions the real merge code calls. Inactive
+    // dimensions get 0 (the gain functions are no-ops in that case).
+    void ComputeMergeGains(
+        CardFrame sourceFrame, CardFrame targetFrame,
+        out float numberGain, out float colorGain,
+        out float shapeGain, out float wordGain)
+    {
+        numberGain = 0f;
+        colorGain = 0f;
+        shapeGain = 0f;
+        wordGain = 0f;
+
+        if (sourceFrame == null || targetFrame == null) return;
+
+        if (sourceFrame.numberCard != null && targetFrame.numberCard != null)
+            numberGain = sourceFrame.numberCard.ComputeMergeNumberGain(
+                targetFrame.numberCard.numberSelected);
+
+        if (sourceFrame.colorCard != null && targetFrame.colorCard != null)
+            colorGain = sourceFrame.colorCard.ComputeMergeColorGain(
+                targetFrame.colorCard.colorSelected, targetFrame.colorCard.colorIndexGray);
+
+        if (sourceFrame.shapeCard != null && targetFrame.shapeCard != null)
+            shapeGain = sourceFrame.shapeCard.ComputeMergeShapeGain(
+                targetFrame.shapeCard.spriteSelectedIndex);
+
+        if (sourceFrame.wordCard != null && targetFrame.wordCard != null
+            && targetFrame.wordCard.wordSelectedList != null)
+            wordGain = sourceFrame.wordCard.ComputeMergeWordGain(
+                targetFrame.wordCard.wordSelectedList);
+    }
+
     void ExecuteConfigure(AgentCommand cmd)
     {
         // Store configuration for when the game scene loads
@@ -458,6 +647,11 @@ public class AgentBridge : MonoBehaviour
         // Step-based game limit (0 = no limit, use timer)
         maxSteps = cmd.max_steps > 0 ? cmd.max_steps : 0;
         actionCount = 0;
+
+        // Perfect-memory ablation: when true, the bridge stops masking hidden
+        // card values + stops dropping previews involving hidden cards. Off by
+        // default so the Memory dimension stays meaningful.
+        perfectMemory = cmd.perfect_memory;
 
         // Set seed if provided
         if (cmd.seed > 0)
@@ -575,7 +769,80 @@ public class AgentBridge : MonoBehaviour
         // Valid actions
         state.valid_actions = ComputeValidActions();
 
+        // Pre-computed merge previews — one entry per legal merge candidate
+        // this turn. The LLM agents see this in the state description so they
+        // can pick the best merge with ground-truth multipliers, no extra
+        // round-trip needed.
+        state.merge_previews = ComputeMergePreviews();
+
         return JsonUtility.ToJson(state);
+    }
+
+    MergePreviewEntry[] ComputeMergePreviews()
+    {
+        var entries = new List<MergePreviewEntry>();
+
+        // Build the same source/target lookup that ComputeValidActions uses
+        // so the entries align with the MOVE action IDs.
+        SlotGeneric[] sources = new SlotGeneric[6];
+        sources[0] = slotNew;
+        for (int i = 0; i < 5; i++)
+            sources[i + 1] = numberedSlots != null && i < numberedSlots.Length
+                ? numberedSlots[i] : null;
+
+        string[] sourceNames = new string[] { "new", "1", "2", "3", "4", "5" };
+
+        for (int srcIdx = 0; srcIdx < 6; srcIdx++)
+        {
+            SlotGeneric src = sources[srcIdx];
+            if (src == null || !src.GetFilledInfo()) continue;
+
+            CardFrame srcFrame = GetCardFrame(src);
+            if (srcFrame == null) continue;
+            // Source must have merges remaining for a merge to be legal.
+            if (srcFrame.numberOfMerges >= srcFrame.maxNumberOfMerges) continue;
+
+            // Skip previews involving a hidden source unless perfect_memory is
+            // on. The gain values come from the real card data, so emitting
+            // them for a hidden card would leak everything memory mode tries
+            // to hide (number value, colour, shape, word).
+            if (!perfectMemory && IsCardHidden(srcFrame)) continue;
+
+            for (int dstNum = 1; dstNum <= 5; dstNum++)
+            {
+                if (numberedSlots == null || dstNum - 1 >= numberedSlots.Length) continue;
+                SlotGeneric dst = numberedSlots[dstNum - 1];
+                if (dst == null || dst == src) continue;
+                // Only emit entries for occupied targets — empty-target moves
+                // are placement actions, not merges, and have no preview.
+                if (!dst.GetFilledInfo()) continue;
+
+                CardFrame dstFrame = GetCardFrame(dst);
+                if (dstFrame == null) continue;
+                // Target must also have merges left or the merge will be
+                // rejected by the game.
+                if (dstFrame.numberOfMerges >= dstFrame.maxNumberOfMerges) continue;
+
+                // Same masking on the destination side.
+                if (!perfectMemory && IsCardHidden(dstFrame)) continue;
+
+                // Force activation so freshly-drawn cards don't return
+                // sentinel-value gains.
+                srcFrame.EnsureActivated();
+                dstFrame.EnsureActivated();
+
+                var entry = new MergePreviewEntry();
+                entry.source = sourceNames[srcIdx];
+                entry.target = dstNum.ToString();
+                entry.action = 1 + srcIdx * 5 + (dstNum - 1);
+                ComputeMergeGains(srcFrame, dstFrame,
+                    out entry.number_gain, out entry.color_gain,
+                    out entry.shape_gain, out entry.word_gain);
+                entries.Add(entry);
+            }
+        }
+
+        return entries.ToArray();
     }
 
     SlotMsg SerializeSlot(SlotGeneric slot, string name)
@@ -599,44 +866,77 @@ public class AgentBridge : MonoBehaviour
         CardFrame frame = card.GetCardFrame();
         if (frame == null) return msg;
 
+        // Force activation in case the bridge is reading state before
+        // CardFrame.Update has had a chance to fire ActivateComponents().
+        // Without this, freshly drawn cards intermittently serialize with
+        // numberSelected == -1000f and the agent sees a "blank" card.
+        frame.EnsureActivated();
+
         msg.card_mana = card.GetCardMana();
         msg.merges_done = frame.numberOfMerges;
         msg.number_active = frame.numberActive;
 
-        // Number dimension (-1000 is the sentinel for "not yet activated")
-        if (frame.numberCard != null && frame.numberCard.numberSelected > -999f)
-            msg.number_value = frame.numberCard.numberSelected;
-        else
-            msg.number_value = 0;
-
-        // Color dimension
-        if (frame.colorCard != null)
-        {
-            Color c = frame.colorCard.colorSelected;
-            msg.color_r = c.r;
-            msg.color_g = c.g;
-            msg.color_b = c.b;
-            msg.color_index_gray = frame.colorCard.colorIndexGray;
-        }
-
-        // Shape dimension
-        if (frame.shapeCard != null)
-            msg.shape_index = frame.shapeCard.spriteSelectedIndex;
-
-        // Word dimension
-        if (frame.wordCard != null && frame.wordCard.wordSelectedList != null)
-            msg.word_value = string.Join(",", frame.wordCard.wordSelectedList);
-
-        // Memory: check if card is hidden
+        // Memory: check if card is hidden FIRST so we can mask the dim values
+        // before they get serialized. The "hidden" signal is the background
+        // sprite renderer's sortingOrder being raised above the dim layers
+        // (>= 13) — that's how MemoryCard hides the card visually.
         if (frame.memoryCard != null)
         {
-            // Check if background sorting order indicates hidden state
             var bg = frame.GetComponentInChildren<CardFrameBackground>();
             if (bg != null)
             {
                 var sr = bg.GetComponent<SpriteRenderer>();
                 msg.memory_hidden = (sr != null && sr.sortingOrder >= 13);
             }
+        }
+
+        // If the card is currently hidden by Memory mode and the run did NOT
+        // opt into perfect_memory, drop every dim value here. The agent must
+        // remember which face this slot showed before it flipped — leaking
+        // the live values defeats the whole dimension. Sentinel zeros are
+        // safe because describe_state branches on memory_hidden first.
+        bool maskHidden = msg.memory_hidden && !perfectMemory;
+
+        if (!maskHidden)
+        {
+            // Number dimension (-1000 is the sentinel for "not yet activated")
+            if (frame.numberCard != null && frame.numberCard.numberSelected > -999f)
+                msg.number_value = frame.numberCard.numberSelected;
+            else
+                msg.number_value = 0;
+
+            // Color dimension
+            if (frame.colorCard != null)
+            {
+                Color c = frame.colorCard.colorSelected;
+                msg.color_r = c.r;
+                msg.color_g = c.g;
+                msg.color_b = c.b;
+                msg.color_index_gray = frame.colorCard.colorIndexGray;
+            }
+
+            // Shape dimension
+            if (frame.shapeCard != null)
+                msg.shape_index = frame.shapeCard.spriteSelectedIndex;
+
+            // Word dimension
+            if (frame.wordCard != null && frame.wordCard.wordSelectedList != null)
+                msg.word_value = string.Join(",", frame.wordCard.wordSelectedList);
+        }
+        else
+        {
+            // Sentinels that match SlotMsg's default-init values, written
+            // explicitly so a future refactor that pre-fills the struct
+            // doesn't accidentally start leaking real values for hidden
+            // cards. shape_index uses -1 which describe_state already treats
+            // as "no shape".
+            msg.number_value = 0;
+            msg.color_r = 0;
+            msg.color_g = 0;
+            msg.color_b = 0;
+            msg.color_index_gray = 0;
+            msg.shape_index = -1;
+            msg.word_value = "";
         }
 
         return msg;
@@ -881,6 +1181,9 @@ public class AgentBridge : MonoBehaviour
         // time control
         public float time_scale;
         public float delta;
+        // memory ablation: when true, the bridge ships card values + previews
+        // even for hidden cards. Default false (Memory dimension is real).
+        public bool perfect_memory;
     }
 
     [System.Serializable]
@@ -910,6 +1213,23 @@ public class AgentBridge : MonoBehaviour
         public int max_steps;
         public SlotMsg[] slots;
         public int[] valid_actions;
+        // One entry per LEGAL merge candidate this turn (both src and dst
+        // occupied, src has merges remaining, src != dst). Lets the LLM and
+        // greedy agents see ground-truth gains without an extra round-trip.
+        public MergePreviewEntry[] merge_previews;
+    }
+
+    [System.Serializable]
+    public class MergePreviewEntry
+    {
+        public string source;        // "new" or "1".."5"
+        public string target;        // "1".."5"
+        public int action;           // matching MOVE action ID (1..30)
+        // Per-dim gain tier (-1=bad, 0=neutral/inactive, 1=ok, 2=great, 3=perfect)
+        public float number_gain;
+        public float color_gain;
+        public float shape_gain;
+        public float word_gain;
     }
 
     [System.Serializable]
@@ -962,5 +1282,23 @@ public class AgentBridge : MonoBehaviour
         public int seq;
         public string type;
         public int[] actions;
+    }
+
+    [System.Serializable]
+    public class MergePreviewMsg
+    {
+        public int seq;
+        public string type;          // "merge_preview"
+        public string source;        // echoed source slot
+        public string target;        // echoed target slot
+        // Per-dimension gain tier (-1=bad, 0=neutral/inactive, 1=ok, 2=great, 3=perfect)
+        public float number_gain;
+        public float color_gain;
+        public float shape_gain;
+        public float word_gain;
+        // Merge-budget info on the target so the agent can avoid invalid merges
+        public int target_merges_done;
+        public int target_merges_max;
+        public bool target_can_accept_merge;
     }
 }
