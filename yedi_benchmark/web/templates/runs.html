@@ -199,9 +199,12 @@
         try {
             const data = await api.get(`/api/runs/${traceRunId}/trace?since=${traceCursor}`);
             renderSystemPrompts(data.system_prompts || {});
-            if (!data.available && (!data.entries || data.entries.length === 0) && traceCursor === 0) {
-                // Random agent or trace not yet started
-                traceStreamEl.innerHTML = `<div class="trace-empty">No LLM trace for this run (random agent or still warming up).</div>`;
+            if (!data.available && traceCursor === 0) {
+                // Non-LLM agent (random/greedy): the runner never creates a
+                // trace for these, so available is false. Replace the
+                // "Waiting for the model's first move…" placeholder with a
+                // clearer message so the user knows it's not stuck.
+                traceStreamEl.innerHTML = `<div class="trace-empty">No LLM trace for this run — agent is not an LLM.</div>`;
             }
             if (data.entries && data.entries.length > 0) {
                 if (traceCursor === 0) traceStreamEl.innerHTML = "";

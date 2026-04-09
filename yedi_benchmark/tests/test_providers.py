@@ -14,10 +14,13 @@ from yedi_benchmark.providers.litellm_provider import LiteLLMProvider
 from yedi_benchmark.providers.registry import (
     SUPPORTED_PROVIDERS,
     DEFAULT_API_KEY_ENVS,
+    DEFAULT_BASE_URLS,
     DEFAULT_MODELS,
     create_provider,
     resolve_api_key,
+    smoke_test_agent,
 )
+from yedi_benchmark.registries.models import AgentConfig
 
 
 def _fake_response(text: str):
@@ -91,6 +94,167 @@ class TestProviderRegistry:
         monkeypatch.delenv("CUSTOM_KEY", raising=False)
         p = create_provider("custom", "openai/local-model", base_url="http://localhost:8080")
         assert p.base_url == "http://localhost:8080"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Ollama provider — local VLM server via LiteLLM's ollama_chat backend
+#
+# The whole point of wiring up Ollama as a first-class provider is to let
+# developers iterate against a local VLM without burning cloud credits. These
+# tests pin the invariants that keep that path working:
+#
+#   1. No API key is required — a missing env var must not raise.
+#   2. base_url defaults to the canonical Ollama port when the user leaves it
+#      blank in the form.
+#   3. User-typed model strings get the `ollama_chat/` prefix LiteLLM expects,
+#      but an already-prefixed string passes through unchanged (so power users
+#      can opt into `ollama/` non-chat mode).
+#   4. An empty model is a clear error (misleading error messages are the
+#      enemy of a smooth dev loop).
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestOllamaProvider:
+    def test_in_supported_providers(self):
+        assert "ollama" in SUPPORTED_PROVIDERS
+
+    def test_has_default_models(self):
+        assert DEFAULT_MODELS["ollama"], "ollama must have a default model menu"
+        # At least one VLM should be listed so the vision dropdown is useful.
+        assert any("vl" in m.lower() or "vision" in m.lower() for m in DEFAULT_MODELS["ollama"])
+
+    def test_default_base_url_is_localhost(self):
+        assert DEFAULT_BASE_URLS["ollama"] == "http://localhost:11434"
+
+    def test_default_api_key_env_empty(self):
+        assert DEFAULT_API_KEY_ENVS["ollama"] == ""
+
+    def test_no_key_required(self, monkeypatch):
+        monkeypatch.delenv("OLLAMA_KEY", raising=False)
+        # Must not raise even with no key in the environment
+        p = create_provider("ollama", "qwen2.5vl:7b")
+        assert isinstance(p, LiteLLMProvider)
+
+    def test_default_base_url_applied(self):
+        p = create_provider("ollama", "qwen2.5vl:7b")
+        assert p.base_url == "http://localhost:11434"
+
+    def test_explicit_base_url_honoured(self):
+        # Power users running Ollama on a different host (e.g. a LAN GPU box)
+        # must be able to override the default.
+        p = create_provider("ollama", "qwen2.5vl:7b", base_url="http://192.168.1.50:11434")
+        assert p.base_url == "http://192.168.1.50:11434"
+
+    def test_model_prefix_prepended(self):
+        p = create_provider("ollama", "qwen2.5vl:7b")
+        assert p.model == "ollama_chat/qwen2.5vl:7b"
+
+    def test_model_prefix_passthrough_ollama_chat(self):
+        # An already-prefixed string must not get double-prefixed.
+        p = create_provider("ollama", "ollama_chat/minicpm-v:8b")
+        assert p.model == "ollama_chat/minicpm-v:8b"
+
+    def test_model_prefix_passthrough_ollama(self):
+        # Allow the older `ollama/` (non-chat) prefix for users who want the
+        # /api/generate endpoint. We don't rewrite to ollama_chat because that
+        # would silently change semantics.
+        p = create_provider("ollama", "ollama/llama3.1:8b")
+        assert p.model == "ollama/llama3.1:8b"
+
+    def test_empty_model_rejected(self):
+        with pytest.raises(ProviderError, match="model"):
+            create_provider("ollama", "")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Smoke test — pre-run connectivity check used by POST /api/runs
+#
+# The handler calls this BEFORE creating a run record. It must:
+#   - Short-circuit to success for programmatic baselines (no provider).
+#   - Wrap create_provider errors (e.g. missing key) as a failure rather than
+#     propagating — the HTTP layer turns the (ok, msg) tuple into a 400.
+#   - Forward a clean success/failure tuple from the underlying provider call.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _agent(**overrides) -> AgentConfig:
+    base = {
+        "name": "test",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "api_key_env": "ANTHROPIC_API_KEY",
+    }
+    base.update(overrides)
+    return AgentConfig(**base)
+
+
+class TestSmokeTestAgent:
+    def test_random_baseline_always_ok(self):
+        agent = _agent(provider="random", model="", api_key_env=None)
+        ok, msg = smoke_test_agent(agent)
+        assert ok is True
+        assert "random" in msg.lower()
+
+    def test_greedy_baseline_always_ok(self):
+        agent = _agent(provider="greedy", model="", api_key_env=None)
+        ok, msg = smoke_test_agent(agent)
+        assert ok is True
+        assert "greedy" in msg.lower()
+
+    def test_missing_api_key_is_soft_failure(self, monkeypatch):
+        """A missing key must NOT raise — it should return (False, message).
+        The HTTP layer relies on this to render a 400 instead of 500."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        agent = _agent()
+        ok, msg = smoke_test_agent(agent)
+        assert ok is False
+        assert "key" in msg.lower()
+
+    def test_success_path_calls_provider(self, monkeypatch):
+        """On a working provider, smoke_test_agent routes through
+        LLMProvider.test_connection and returns its verdict."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
+        agent = _agent()
+        with patch("litellm.completion", return_value=_fake_response("ok")):
+            ok, msg = smoke_test_agent(agent, timeout=5.0)
+        assert ok is True
+
+    def test_failure_path_wraps_provider_error(self, monkeypatch):
+        """If the underlying HTTP call blows up, smoke_test_agent surfaces the
+        error string so the HTTP 400 body is readable."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
+        agent = _agent()
+        with patch("litellm.completion", side_effect=RuntimeError("connection refused")):
+            ok, msg = smoke_test_agent(agent, timeout=5.0)
+        assert ok is False
+        assert "connection refused" in msg
+
+    def test_timeout_threaded_to_complete(self, monkeypatch):
+        """The smoke test passes its timeout all the way down to litellm.completion
+        so a dead local server fails fast instead of blocking for minutes."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
+        agent = _agent()
+        with patch("litellm.completion", return_value=_fake_response("ok")) as mock:
+            smoke_test_agent(agent, timeout=7.5)
+        assert mock.call_args.kwargs.get("timeout") == 7.5
+
+    def test_ollama_agent_no_key_success(self, monkeypatch):
+        """The whole point of wiring up ollama: the smoke test must work on a
+        local agent with no key set. Mocks litellm so no real HTTP happens."""
+        agent = _agent(
+            provider="ollama",
+            model="qwen2.5vl:7b",
+            api_key_env=None,
+            base_url="http://localhost:11434",
+            supports_vision=True,
+        )
+        with patch("litellm.completion", return_value=_fake_response("ok")) as mock:
+            ok, _ = smoke_test_agent(agent, timeout=5.0)
+        assert ok is True
+        # And confirm LiteLLM was called with the rewritten model + base_url.
+        kwargs = mock.call_args.kwargs
+        assert kwargs["model"] == "ollama_chat/qwen2.5vl:7b"
+        assert kwargs["base_url"] == "http://localhost:11434"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

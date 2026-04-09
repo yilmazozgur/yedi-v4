@@ -372,6 +372,34 @@ class TestCompactLLMAgent:
         assert "a3:new>s3" in agent._compact_trail[0]
         assert "m195(-5)" in agent._compact_trail[0]
 
+    def test_provider_error_sets_fallback_reason(self):
+        """The runner reads _last_action_fallback_reason to mark events.jsonl
+        so offline logs can distinguish a real pick from a silent fallback."""
+        class BoomProvider(StubProvider):
+            def complete(self, messages, system=None, should_cancel=None):
+                raise RuntimeError("network down")
+
+        prov = BoomProvider()
+        mask = np.zeros(38, dtype=np.int8)
+        mask[3] = 1
+        agent = LLMAgent(provider=prov, prompt=get_default_prompt(), mode="compact")
+        agent.act({"action_mask": mask}, _make_info(mana=200))
+        assert agent._last_action_fallback_reason is not None
+        assert "network down" in agent._last_action_fallback_reason
+        assert agent._last_action_fallback_reason.startswith("llm_error:")
+
+    def test_successful_act_clears_fallback_reason(self):
+        """A good act() call must clear any previous fallback marker so the
+        runner doesn't mistake a success for a stale error."""
+        prov = StubProvider(reply="0")
+        mask = np.zeros(38, dtype=np.int8)
+        mask[0] = 1
+        agent = LLMAgent(provider=prov, prompt=get_default_prompt(), mode="compact")
+        # Pre-seed a stale marker
+        agent._last_action_fallback_reason = "llm_error: old"
+        agent.act({"action_mask": mask}, _make_info(mana=200))
+        assert agent._last_action_fallback_reason is None
+
     def test_trail_capped_at_max_history(self):
         prov = StubProvider(reply="0")
         agent = LLMAgent(provider=prov, prompt=get_default_prompt(), mode="compact")

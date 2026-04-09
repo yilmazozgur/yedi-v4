@@ -24,4 +24,5 @@ def bridge_status(status: BridgeStatus = Depends(get_bridge_status)) -> BridgeSt
         agent_connected=snap.agent_connected,
         game_connected_at=snap.game_connected_at,
         agent_connected_at=snap.agent_connected_at,
+        tab_hidden=snap.tab_hidden,
     )

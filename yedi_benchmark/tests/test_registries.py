@@ -324,6 +324,37 @@ class TestRunRegistry:
         assert completed.status == RunStatus.COMPLETED
         assert completed.finished_at is not None
 
+    def test_record_episode_error_persists(self, setup_env):
+        """A per-episode error is logged on the run record without
+        appending an episode result and without changing the status —
+        the runner uses this to keep going after a transient bridge
+        failure instead of marking the whole run FAILED."""
+        ar, pr, rr = setup_env
+        agent = ar.get_by_name("Random")
+        record = rr.create(
+            agent=agent, prompt=None,
+            configs=["easy_math_add", "easy_visual_add"],
+            episodes_per_config=2, max_steps=50,
+            mode=AgentMode.METADATA_STATELESS,
+        )
+
+        rr.record_episode_error(record.id, "easy_math_add", 0, "bridge timeout")
+        rr.record_episode_error(record.id, "easy_visual_add", 1, "ws closed")
+
+        refetched = rr.get(record.id)
+        # Status untouched
+        assert refetched.status == RunStatus.PENDING
+        # Two errors, in order
+        assert len(refetched.episode_errors) == 2
+        assert refetched.episode_errors[0]["config"] == "easy_math_add"
+        assert refetched.episode_errors[0]["episode_idx"] == 0
+        assert refetched.episode_errors[0]["error"] == "bridge timeout"
+        assert refetched.episode_errors[1]["error"] == "ws closed"
+        # episode_errors do NOT inflate the per-config aggregates
+        assert refetched.results["easy_math_add"].episodes == []
+        assert refetched.results["easy_math_add"].mean_max_mana == 0.0
+        assert refetched.episodes_done() == 0
+
     def test_set_error_marks_failed(self, setup_env):
         ar, pr, rr = setup_env
         agent = ar.get_by_name("Random")

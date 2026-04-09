@@ -10,8 +10,9 @@ Architecture:
     Python Agent <-> /ws/agent <-> Server <-> /ws/game <-> Browser/Unity
 
 Usage:
-    cd yedi_benchmark
-    python gym_server.py --build-dir ../WebGLBuild --port 8000
+    python -m yedi_benchmark.gym_server --port 8000
+    # Default --build-dir resolves to <repo>/WebGLBuild relative to this
+    # file, so the command works regardless of your current directory.
 """
 
 import argparse
@@ -78,11 +79,27 @@ class BridgeError(Exception):
     """
 
 
+# Heartbeat: how often the server pings the game (s) and how stale the
+# bridge can get before we mark it dead. With a 5s interval and 12s dead
+# threshold we tolerate one missed ping plus jitter; two missed pings is a
+# guaranteed kill. Tuned so the agent fails fast (~12s) instead of sitting on
+# the per-command 30s wait_for.
+HEARTBEAT_INTERVAL_S = 5.0
+HEARTBEAT_DEAD_AFTER_S = 12.0
+# Sentinel seq used by the heartbeat ping. The agent route filters replies
+# carrying this seq so they don't show up as "unrouted" warnings.
+HEARTBEAT_SEQ = -1
+
+
 class GameConnection:
     """Represents the browser/Unity WebSocket connection."""
     def __init__(self, ws: WebSocket):
         self.ws = ws
         self.connected = True
+        # Updated by game_websocket() on every incoming message; the
+        # heartbeat task uses this to decide whether the bridge is alive.
+        self.last_seen = time.monotonic()
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
     async def send(self, data: dict):
         if not self.connected:
@@ -99,6 +116,50 @@ class GameConnection:
     async def receive(self) -> dict:
         return await self.ws.receive_json()
 
+    def touch(self) -> None:
+        """Mark the bridge as having just heard from the game."""
+        self.last_seen = time.monotonic()
+
+    def start_heartbeat(self) -> None:
+        """Spawn the periodic ping task that detects a silent dead bridge."""
+        if self._heartbeat_task is not None:
+            return
+        loop = asyncio.get_event_loop()
+        self._heartbeat_task = loop.create_task(self._heartbeat_loop())
+
+    async def _heartbeat_loop(self) -> None:
+        """Ping the game every HEARTBEAT_INTERVAL_S; mark dead if silent.
+
+        We don't care about correlating the pong reply to the ping — the
+        receive loop in ``game_websocket`` updates ``last_seen`` on ANY
+        incoming message (state responses, events, pong acks). This task
+        only fires when there's been no chatter from the game for a while.
+        """
+        try:
+            while self.connected:
+                await asyncio.sleep(HEARTBEAT_INTERVAL_S)
+                if not self.connected:
+                    return
+                age = time.monotonic() - self.last_seen
+                if age > HEARTBEAT_DEAD_AFTER_S:
+                    logger.warning(
+                        "game bridge heartbeat dead: no message in %.1fs",
+                        age,
+                    )
+                    self.mark_dead()
+                    return
+                try:
+                    await self.ws.send_json({
+                        "type": "ping",
+                        "seq": HEARTBEAT_SEQ,
+                    })
+                except Exception as e:
+                    logger.warning("heartbeat ping send failed: %s", e)
+                    self.mark_dead()
+                    return
+        except asyncio.CancelledError:
+            return
+
     def mark_dead(self):
         """Mark the bridge as dead and fail all in-flight pending requests.
 
@@ -109,6 +170,8 @@ class GameConnection:
         if not self.connected:
             return
         self.connected = False
+        if self._heartbeat_task is not None and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
         try:
             get_bridge_status().mark_game_disconnected()
         except Exception:
@@ -289,10 +352,37 @@ async def game_websocket(ws: WebSocket):
     game_connection = conn
     get_bridge_status().mark_game_connected()
     logger.info("Game connected via WebSocket")
+    conn.start_heartbeat()
 
     try:
         while True:
             data = await ws.receive_json()
+            # Any incoming message proves the bridge is alive — let the
+            # heartbeat task off the hook for another window.
+            conn.touch()
+
+            # Drop heartbeat acks before they hit the agent route, otherwise
+            # the unrouted-message warning fires every 5 seconds.
+            if data.get("seq") == HEARTBEAT_SEQ:
+                continue
+
+            # Page Visibility report from the browser tab. Sent unsolicited
+            # by index.html's visibilitychange handler — directly from JS,
+            # not via Unity SendMessage, so it still arrives even when the
+            # WebGL main loop is throttled. We update bridge status and do
+            # NOT forward to the agent route (the gym env doesn't care).
+            if data.get("type") == "visibility":
+                hidden = bool(data.get("hidden", False))
+                get_bridge_status().set_tab_hidden(hidden)
+                if hidden:
+                    logger.warning(
+                        "browser tab reported hidden — WebGL will be throttled, "
+                        "expect bridge timeouts on draw_card etc."
+                    )
+                else:
+                    logger.info("browser tab reported visible again")
+                continue
+
             # Route game messages to the agent
             if agent_connection and agent_connection.connected:
                 agent_connection.on_game_message(data)
@@ -523,7 +613,13 @@ async def serve_template_data(filepath: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Yedi AI Benchmark Server")
-    parser.add_argument("--build-dir", default="../WebGLBuild",
+    # The default is computed relative to THIS file rather than the cwd —
+    # otherwise launching with `python -m yedi_benchmark.gym_server` from
+    # the repo root resolves "../WebGLBuild" to the parent of the repo
+    # root and the server can't find the Unity build. Anchoring on the
+    # source file means the default works regardless of where you cd to.
+    default_build_dir = str(Path(__file__).resolve().parent.parent / "WebGLBuild")
+    parser.add_argument("--build-dir", default=default_build_dir,
                         help="Path to WebGL build directory")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--host", default="0.0.0.0")

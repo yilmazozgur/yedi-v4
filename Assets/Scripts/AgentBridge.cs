@@ -45,6 +45,13 @@ public class AgentBridge : MonoBehaviour
     int maxSteps = 0;
     int actionCount = 0;
 
+    // Mana deducted when an agent issues a slot-to-slot move that does NOT
+    // produce a merge (oscillation pattern). The reward-shaping penalty in
+    // YediEnv is only visible to RL reward logs and to LLM conversational
+    // mode; we need an in-game mana hit so the model sees the cost through
+    // the normal state dump and max_mana scoring in every mode.
+    const float UNPRODUCTIVE_MOVE_MANA_PENALTY = 5f;
+
     // When false (default), the bridge respects MemoryCard.hidden — slot dim
     // values are nulled out and merge_previews entries that touch a hidden
     // card are dropped, so the agent must actually remember card identity.
@@ -211,60 +218,100 @@ public class AgentBridge : MonoBehaviour
 
     public void OnAgentCommand(string commandJson)
     {
-        var cmd = JsonUtility.FromJson<AgentCommand>(commandJson);
-        if (cmd == null)
+        // Top-level try/catch around the whole dispatch. Without this, an
+        // unhandled exception in a sync handler (e.g. NullRef in
+        // ExecuteDrawCard) would silently die inside Unity's SendMessage
+        // pump and the agent would sit on a 30s wait_for timeout. By
+        // funnelling exceptions to SendError, the env gets a real reason
+        // and the runner's per-episode catch can recover within 1 frame.
+        AgentCommand cmd = null;
+        try
         {
-            SendError(0, "Failed to parse command: " + commandJson);
-            return;
+            cmd = JsonUtility.FromJson<AgentCommand>(commandJson);
+            if (cmd == null)
+            {
+                SendError(0, "Failed to parse command: " + commandJson);
+                return;
+            }
+
+            Debug.Log("[AgentBridge] Command: " + cmd.type + " seq=" + cmd.seq);
+
+            switch (cmd.type)
+            {
+                case "get_state":
+                    SendState(cmd.seq);
+                    break;
+                case "get_screenshot":
+                    TakeScreenshot(cmd.seq);
+                    break;
+                case "draw_card":
+                    ExecuteDrawCard(cmd);
+                    break;
+                case "move_card":
+                    ExecuteMoveCard(cmd);
+                    break;
+                case "sell_card":
+                    ExecuteSellCard(cmd);
+                    break;
+                case "configure":
+                    ExecuteConfigure(cmd);
+                    break;
+                case "reset":
+                    ExecuteReset(cmd);
+                    break;
+                case "set_time_scale":
+                    Time.timeScale = cmd.time_scale;
+                    SendAck(cmd.seq, true);
+                    break;
+                case "step_time":
+                    StartCoroutine(StepTime(cmd.seq, cmd.delta));
+                    break;
+                case "get_valid_actions":
+                    SendValidActions(cmd.seq);
+                    break;
+                case "preview_merge":
+                    ExecutePreviewMerge(cmd);
+                    break;
+                case "start_game":
+                    ExecuteStartGame(cmd);
+                    break;
+                case "ping":
+                    SendAck(cmd.seq, true);
+                    break;
+                default:
+                    SendError(cmd.seq, "Unknown command type: " + cmd.type);
+                    break;
+            }
         }
-
-        Debug.Log("[AgentBridge] Command: " + cmd.type + " seq=" + cmd.seq);
-
-        switch (cmd.type)
+        catch (System.Exception e)
         {
-            case "get_state":
-                SendState(cmd.seq);
-                break;
-            case "get_screenshot":
-                TakeScreenshot(cmd.seq);
-                break;
-            case "draw_card":
-                ExecuteDrawCard(cmd);
-                break;
-            case "move_card":
-                ExecuteMoveCard(cmd);
-                break;
-            case "sell_card":
-                ExecuteSellCard(cmd);
-                break;
-            case "configure":
-                ExecuteConfigure(cmd);
-                break;
-            case "reset":
-                ExecuteReset(cmd);
-                break;
-            case "set_time_scale":
-                Time.timeScale = cmd.time_scale;
-                SendAck(cmd.seq, true);
-                break;
-            case "step_time":
-                StartCoroutine(StepTime(cmd.seq, cmd.delta));
-                break;
-            case "get_valid_actions":
-                SendValidActions(cmd.seq);
-                break;
-            case "preview_merge":
-                ExecutePreviewMerge(cmd);
-                break;
-            case "start_game":
-                ExecuteStartGame(cmd);
-                break;
-            case "ping":
-                SendAck(cmd.seq, true);
-                break;
-            default:
-                SendError(cmd.seq, "Unknown command type: " + cmd.type);
-                break;
+            int seq = (cmd != null) ? cmd.seq : 0;
+            string cmdType = (cmd != null && !string.IsNullOrEmpty(cmd.type)) ? cmd.type : "unknown";
+            Debug.LogError("[AgentBridge] " + cmdType + " threw: " + e);
+            SendError(seq, cmdType + " failed: " + e.Message);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Coroutine error handling helpers
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Run TryCacheReferences + SendState inside a try/catch so a serializer
+    /// crash inside a coroutine surfaces as a bridge error instead of dying
+    /// silently and stalling the agent on a 30s wait_for.
+    /// </summary>
+    void SafeSendState(int seq, string cmdLabel)
+    {
+        try
+        {
+            TryCacheReferences();
+            SendState(seq);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError("[AgentBridge] " + cmdLabel + " serialize failed: " + e);
+            SendError(seq, cmdLabel + " serialize failed: " + e.Message);
         }
     }
 
@@ -286,17 +333,23 @@ public class AgentBridge : MonoBehaviour
     {
         for (int i = 0; i < frames; i++)
             yield return null;
-        TryCacheReferences();
 
         // Send final state with game_over = true
-        SendState(seq);
+        SafeSendState(seq, "end_game");
 
         // Auto-return to Heptagon after a short delay
         yield return null;
-        if (levelController != null)
-            levelController.BackButtonPressed();
-        else
-            SceneManager.LoadScene("Scene Selection Screen");
+        try
+        {
+            if (levelController != null)
+                levelController.BackButtonPressed();
+            else
+                SceneManager.LoadScene("Scene Selection Screen");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[AgentBridge] EndGameAfterFrames scene unload threw: " + e.Message);
+        }
     }
 
     void ExecuteDrawCard(AgentCommand cmd)
@@ -350,17 +403,32 @@ public class AgentBridge : MonoBehaviour
         // run), bounded so a stuck draw doesn't hang the bridge forever.
         // We can't just poll numberCard.numberSelected because color/shape/word
         // -only modes legitimately leave the number sentinel as -1000.
+        //
+        // Each iteration's body is wrapped in try/catch so a transient null
+        // ref while the card is half-initialized doesn't kill the coroutine
+        // (which would strand the agent on a 30s wait_for). We just retry.
         for (int i = 0; i < maxFrames; i++)
         {
             yield return null;
-            if (slotNew == null || !slotNew.GetFilledInfo()) continue;
-            Card card = slotNew.GetCardObject();
-            if (card == null) continue;
-            CardFrame frame = card.GetCardFrame();
-            if (frame == null) continue;
-            // Force activation if Start has resolved the dimension components.
-            frame.EnsureActivated();
-            if (frame.IsInitialized) yield break;
+            bool ready = false;
+            try
+            {
+                if (slotNew == null || !slotNew.GetFilledInfo()) continue;
+                Card card = slotNew.GetCardObject();
+                if (card == null) continue;
+                CardFrame frame = card.GetCardFrame();
+                if (frame == null) continue;
+                // Force activation if Start has resolved the dimension components.
+                frame.EnsureActivated();
+                ready = frame.IsInitialized;
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[AgentBridge] WaitForDrawReady iter " + i +
+                                 " threw, retrying: " + e.Message);
+                continue;
+            }
+            if (ready) yield break;
         }
         Debug.LogWarning("[AgentBridge] WaitForDrawReady gave up after " + maxFrames + " frames");
     }
@@ -368,20 +436,25 @@ public class AgentBridge : MonoBehaviour
     IEnumerator SendStateAfterDrawReady(int seq)
     {
         yield return WaitForDrawReady();
-        TryCacheReferences();
-        SendState(seq);
+        SafeSendState(seq, "draw_card");
     }
 
     IEnumerator EndGameAfterDrawReady(int seq)
     {
         yield return WaitForDrawReady();
-        TryCacheReferences();
-        SendState(seq);
+        SafeSendState(seq, "draw_card");
         yield return null;
-        if (levelController != null)
-            levelController.BackButtonPressed();
-        else
-            SceneManager.LoadScene("Scene Selection Screen");
+        try
+        {
+            if (levelController != null)
+                levelController.BackButtonPressed();
+            else
+                SceneManager.LoadScene("Scene Selection Screen");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[AgentBridge] EndGameAfterDrawReady scene unload threw: " + e.Message);
+        }
     }
 
     void ExecuteMoveCard(AgentCommand cmd)
@@ -425,6 +498,13 @@ public class AgentBridge : MonoBehaviour
             return;
         }
 
+        // Snapshot occupied board count BEFORE the drop so we can detect an
+        // unproductive slot-to-slot move (no merge). Only board-to-board
+        // moves qualify — placing a freshly-drawn card from "new" into a
+        // build slot is always legitimate and never penalised.
+        bool sourceIsBuildSlot = (sourceSlot != slotNew);
+        int occupiedBefore = CountOccupiedBoardSlots();
+
         // Execute programmatic drop
         frame.ExecuteProgrammaticDrop(targetSlot, cmd.motor_time, cmd.motor_distance,
             cmd.motor_dist_to_slot, cmd.motor_half_distance, cmd.motor_min_distances);
@@ -433,7 +513,63 @@ public class AgentBridge : MonoBehaviour
         if (IsStepLimitReached())
             StartCoroutine(EndGameAfterFrames(cmd.seq, 2));
         else
-            StartCoroutine(SendStateAfterFrames(cmd.seq, 2));
+            StartCoroutine(SendStateAfterMoveCheck(cmd.seq, 2, sourceIsBuildSlot, occupiedBefore));
+    }
+
+    /// <summary>
+    /// Count how many of the 5 build slots currently hold a card. Used to
+    /// decide whether a slot-to-slot move produced a merge (count drops) or
+    /// was an unproductive oscillation (count unchanged).
+    /// </summary>
+    int CountOccupiedBoardSlots()
+    {
+        int n = 0;
+        if (numberedSlots != null)
+        {
+            for (int i = 0; i < numberedSlots.Length; i++)
+            {
+                if (numberedSlots[i] != null && numberedSlots[i].GetFilledInfo())
+                    n++;
+            }
+        }
+        return n;
+    }
+
+    /// <summary>
+    /// After a move_card command settles, deduct a small mana penalty if the
+    /// source was a build slot AND the occupied count didn't drop — i.e. the
+    /// agent shuffled a card between slots without producing a merge. This is
+    /// the "oscillation tax": every move already costs a step and ticks the
+    /// drain timer, but the in-game mana hit also shows up in the state dump
+    /// and the max_mana score, so every agent mode feels the penalty.
+    /// </summary>
+    IEnumerator SendStateAfterMoveCheck(int seq, int frames, bool sourceIsBuildSlot, int occupiedBefore)
+    {
+        for (int i = 0; i < frames; i++)
+            yield return null;
+        try
+        {
+            TryCacheReferences();
+
+            if (sourceIsBuildSlot && manaDisplay != null)
+            {
+                int occupiedAfter = CountOccupiedBoardSlots();
+                if (occupiedAfter >= occupiedBefore)
+                {
+                    manaDisplay.SpendMana(UNPRODUCTIVE_MOVE_MANA_PENALTY);
+                    Debug.Log($"[AgentBridge] Unproductive slot-to-slot move — deducted " +
+                              $"{UNPRODUCTIVE_MOVE_MANA_PENALTY} mana");
+                }
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError("[AgentBridge] move_card post-check threw: " + e);
+            SendError(seq, "move_card post-check failed: " + e.Message);
+            yield break;
+        }
+
+        SafeSendState(seq, "move_card");
     }
 
     void ExecuteSellCard(AgentCommand cmd)
@@ -1103,8 +1239,9 @@ public class AgentBridge : MonoBehaviour
     {
         for (int i = 0; i < frames; i++)
             yield return null;
-        TryCacheReferences(); // Refresh in case cards were created/destroyed
-        SendState(seq);
+        // Refresh in case cards were created/destroyed; SafeSendState
+        // catches serializer crashes so they can't strand the agent.
+        SafeSendState(seq, "post_action");
     }
 
     // ------------------------------------------------------------------

@@ -38,12 +38,17 @@ class LLMProvider(ABC):
         base_url: Optional[str] = None,
         max_tokens: int = 512,
         supports_vision: bool = False,
+        num_ctx: Optional[int] = None,
     ):
         self.model = model
         self.api_key = api_key
         self.base_url = base_url
         self.max_tokens = max_tokens
         self.supports_vision = supports_vision
+        # Only meaningful for backends that honour it (Ollama). The
+        # LiteLLMProvider forwards it as a top-level kwarg to
+        # litellm.completion, which routes it into Ollama's options block.
+        self.num_ctx = num_ctx
 
     @abstractmethod
     def complete(
@@ -51,6 +56,7 @@ class LLMProvider(ABC):
         messages: list[dict],
         system: Optional[str] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
+        timeout: Optional[float] = None,
     ) -> str:
         """Send a chat completion request and return the assistant's text reply.
 
@@ -65,6 +71,10 @@ class LLMProvider(ABC):
                 waits (e.g. rate-limit backoff sleeps) and raises
                 ProviderCancelled instead of finishing the wait. The actual
                 in-flight HTTP request is not interruptible.
+            timeout: optional per-request HTTP timeout in seconds. When set,
+                the underlying HTTP client raises a timeout error instead of
+                blocking indefinitely. Used primarily by the pre-run smoke
+                test so a dead local server fails fast.
 
         Returns:
             The assistant's text content.
@@ -76,8 +86,13 @@ class LLMProvider(ABC):
         """
         ...
 
-    def test_connection(self) -> tuple[bool, str]:
+    def test_connection(self, timeout: float = 30.0) -> tuple[bool, str]:
         """Send a tiny ping request to verify credentials and connectivity.
+
+        The default 30s timeout accommodates Ollama cold-start: the first
+        request after the server boots has to load the model into VRAM,
+        which can take 10-20s for a 7B VLM on a consumer GPU. Subsequent
+        calls respond in <1s.
 
         Returns:
             (success, message). On failure, message contains the error string.
@@ -86,6 +101,7 @@ class LLMProvider(ABC):
             reply = self.complete(
                 messages=[{"role": "user", "content": "Reply with the single word 'ok'."}],
                 system=None,
+                timeout=timeout,
             )
             return True, f"OK ({reply.strip()[:40]})"
         except Exception as e:

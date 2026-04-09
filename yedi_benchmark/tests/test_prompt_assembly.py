@@ -12,8 +12,10 @@ from yedi_benchmark.agents.llm_agent import (
     CORE_RULES,
     DIMENSION_RULES,
     LLMAgent,
+    _build_sell_hint,
     build_system_prompt,
     describe_state,
+    format_trail_entry,
 )
 from yedi_benchmark.providers.base import LLMProvider
 from yedi_benchmark.registries.default_prompt import get_default_prompt
@@ -197,10 +199,14 @@ class TestDescribeState:
             ],
         }, show_merge_previews=True)
         assert "Merge previews" in out
-        assert "new→1 a1: Num=+2" in out
-        assert "new→2 a2: Num=+3" in out
+        # New format: "a1   new→1: Number GREAT ×2.0"
+        assert "new→1" in out and "Number GREAT" in out and "×2.0" in out
+        assert "new→2" in out and "Number PERFECT" in out and "×2.5" in out
+        # Action IDs lead each row
+        assert "a1" in out
+        assert "a2" in out
         # color is inactive, must not leak
-        assert "Col=" not in out
+        assert "Color" not in out
 
     def test_merge_previews_multi_dim(self):
         out = describe_state({
@@ -216,9 +222,9 @@ class TestDescribeState:
                 },
             ],
         }, show_merge_previews=True)
-        # Both active dims in output, in tier-format with explicit sign
-        assert "Num=+2" in out
-        assert "Col=+1" in out
+        # Both active dims appear in tier-word + multiplier form
+        assert "Number GREAT ×2.0" in out
+        assert "Color GOOD ×1.5" in out
 
     def test_merge_previews_omitted_when_empty(self):
         out = describe_state({
@@ -245,7 +251,7 @@ class TestDescribeState:
         }, show_merge_previews=True)
         assert "Merge previews" not in out
 
-    def test_merge_previews_negative_gain_renders_with_sign(self):
+    def test_merge_previews_negative_gain_renders_as_bad_tier(self):
         out = describe_state({
             "mana": 200, "mana_max": 200,
             "slots": [{"occupied": False}],
@@ -258,11 +264,112 @@ class TestDescribeState:
                 },
             ],
         }, show_merge_previews=True)
-        assert "Num=-1" in out
+        # New format renders -1 as "BAD ×0.9" instead of bare "Num=-1".
+        # The slot-value notation ("Num=-1.0") is what the old format
+        # collided with — small models read it as a card value. Tier
+        # words eliminate that overlap.
+        assert "Number BAD ×0.9" in out
+        assert "Num=-1" not in out
+
+    def test_merge_previews_neutral_tier_renders_one_x(self):
+        out = describe_state({
+            "mana": 200, "mana_max": 200,
+            "slots": [{"occupied": False}],
+            "mode_number": "add",
+            "merge_previews": [
+                {
+                    "source": "new", "target": "1", "action": 1,
+                    "number_gain": 0, "color_gain": 0,
+                    "shape_gain": 0, "word_gain": 0,
+                },
+            ],
+        }, show_merge_previews=True)
+        assert "Number neutral ×1.0" in out
+
+    def test_merge_previews_unknown_tier_falls_through(self):
+        # Defensive: if the bridge ever ships a tier outside {-1..3} we
+        # should not crash — render it as "tier+N" with a "?" multiplier.
+        out = describe_state({
+            "mana": 200, "mana_max": 200,
+            "slots": [{"occupied": False}],
+            "mode_number": "add",
+            "merge_previews": [
+                {
+                    "source": "new", "target": "1", "action": 1,
+                    "number_gain": 7, "color_gain": 0,
+                    "shape_gain": 0, "word_gain": 0,
+                },
+            ],
+        }, show_merge_previews=True)
+        assert "tier+7" in out
+        assert "×?" in out
 
     # ──────────────────────────────────────────────────────────────────
     # show_merge_previews gating
     # ──────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────
+    # hide_perceptual_attrs — vision-mode leak guard. When the agent is
+    # running with a screenshot, the text dump must NOT expose per-slot
+    # card attributes (number/color/shape/word), otherwise the model can
+    # solve the visual perception test from the text alone.
+    # ──────────────────────────────────────────────────────────────────
+    def test_vision_strips_per_slot_attributes(self):
+        raw = {
+            "mana": 200, "mana_max": 200,
+            "action_count": 0, "max_steps": 100,
+            "slots": [
+                {
+                    "occupied": True, "card_mana": 9, "merges_done": 1,
+                    "number_value": 3, "number_active": True,
+                    "color_r": 1.0, "color_g": 0.0, "color_b": 0.0,
+                    "shape_index": 2,
+                    "word_value": "apple",
+                },
+                {"occupied": False},
+            ],
+            "valid_actions": [0, 37],
+        }
+        out = describe_state(raw, hide_perceptual_attrs=True)
+        # HUD-level fields must still be present
+        assert "Mana: 200" in out
+        assert "Mana=9" in out
+        assert "Merges=1" in out
+        # The "see screenshot" marker should appear for the occupied slot
+        assert "see screenshot" in out
+        # But every per-dim token must be stripped
+        assert "Num=" not in out
+        assert "Color=" not in out
+        assert "Shape=" not in out
+        assert "Word=" not in out
+        # And the empty slot must still render
+        assert "Empty" in out
+
+    def test_vision_keeps_hidden_marker(self):
+        """Hidden cards must still say HIDDEN even in vision mode — the
+        screenshot won't show the value either."""
+        out = describe_state({
+            "mana": 200, "mana_max": 200,
+            "slots": [
+                {"occupied": True, "card_mana": 9, "merges_done": 0, "memory_hidden": True},
+            ],
+        }, hide_perceptual_attrs=True)
+        assert "HIDDEN" in out
+        assert "Num=" not in out
+
+    def test_metadata_mode_still_shows_attributes(self):
+        """Guard against regressing the default path — metadata-mode agents
+        depend on the per-dim tokens."""
+        raw = {
+            "mana": 200, "mana_max": 200,
+            "slots": [
+                {"occupied": True, "card_mana": 9, "merges_done": 0,
+                 "number_value": 3, "number_active": True},
+            ],
+            "valid_actions": [0, 37],
+        }
+        out = describe_state(raw)  # default hide_perceptual_attrs=False
+        assert "Num=3" in out
+
     def test_merge_previews_omitted_by_default(self):
         # Default canonical-benchmark behaviour: even with a fully-populated
         # previews block and active dims, nothing is rendered unless the
@@ -286,6 +393,172 @@ class TestDescribeState:
         assert "Merge previews" not in describe_state(raw, show_merge_previews=False)
         # Flag true → rendered
         assert "Merge previews" in describe_state(raw, show_merge_previews=True)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _build_sell_hint — discipline check surfaced in describe_state. Lifts the
+# greedy agent's "should I sell now?" arithmetic into the prompt so small
+# models stop liquidating mana=9 cards that cannot raise the score.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _slot(occupied=False, card_mana=0, merges=0, **extra):
+    """Compact slot factory for sell-hint tests."""
+    s = {"occupied": occupied, "card_mana": card_mana, "merges_done": merges}
+    s.update(extra)
+    return s
+
+
+class TestSellHint:
+    def test_no_built_slots_returns_empty(self):
+        # Index 0 = new, 6 = sell. Neither counts as a sell candidate.
+        slots = [
+            _slot(occupied=True, card_mana=11),  # new — ignored
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+        ]
+        assert _build_sell_hint(slots, mana=180, mana_max=200) == ""
+
+    def test_selling_now_would_beat_best(self):
+        slots = [
+            _slot(occupied=False),                            # new
+            _slot(occupied=True, card_mana=72, merges=2),     # build 1
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+        ]
+        out = _build_sell_hint(slots, mana=190, mana_max=200)
+        assert "slot 1" in out
+        assert "+72" in out
+        assert "2/3 merges" in out
+        assert "action 32" in out
+        # 190 + 72 = 262 > 200 → should encourage selling
+        assert "raise Best" in out
+        assert "262" in out
+
+    def test_selling_now_short_of_best_warns(self):
+        slots = [
+            _slot(occupied=False),                            # new
+            _slot(occupied=True, card_mana=18, merges=1),     # build 1
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+        ]
+        out = _build_sell_hint(slots, mana=120, mana_max=200)
+        # 120 + 18 = 138 < 200 → discourage premature selling
+        assert "138" in out
+        assert "short by 62" in out
+        assert "keep merging" in out
+
+    def test_maxed_slot_annotated(self):
+        slots = [
+            _slot(occupied=False),                             # new
+            _slot(occupied=False),
+            _slot(occupied=True, card_mana=50, merges=3),      # build 2 — MAXED
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+        ]
+        out = _build_sell_hint(slots, mana=200, mana_max=200)
+        assert "slot 2" in out
+        assert "MAXED" in out
+        assert "3/3 merges" in out
+        assert "action 33" in out
+
+    def test_picks_highest_mana_when_multiple_built(self):
+        slots = [
+            _slot(occupied=False),                             # new
+            _slot(occupied=True, card_mana=20, merges=1),      # build 1
+            _slot(occupied=True, card_mana=80, merges=2),      # build 2 — winner
+            _slot(occupied=True, card_mana=15, merges=0),      # build 3
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+        ]
+        out = _build_sell_hint(slots, mana=100, mana_max=300)
+        assert "slot 2" in out
+        assert "+80" in out
+        assert "action 33" in out  # 31 + 2
+
+    def test_zero_best_falls_back_to_basic_hint(self):
+        # Early-game / unknown best: still emit the basic candidate line
+        # but skip the bank-vs-best comparison.
+        slots = [
+            _slot(occupied=False),                             # new
+            _slot(occupied=True, card_mana=15, merges=0),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+        ]
+        out = _build_sell_hint(slots, mana=180, mana_max=0)
+        assert "slot 1" in out
+        assert "+15" in out
+        assert "Bank would become 195" in out
+        assert "raise Best" not in out
+        assert "short by" not in out
+
+    def test_handles_string_or_none_card_mana(self):
+        # Defensive: bridge has been seen to ship integer-as-string in odd
+        # serializer paths, and `None` shows up during rapid resets.
+        slots = [
+            _slot(occupied=False),
+            {"occupied": True, "card_mana": "30", "merges_done": "1"},
+            {"occupied": True, "card_mana": None, "merges_done": None},
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+            _slot(occupied=False),
+        ]
+        # Should not raise; should pick slot 1 (card_mana=30 > None→0)
+        out = _build_sell_hint(slots, mana=100, mana_max=200)
+        assert "slot 1" in out
+        assert "+30" in out
+
+    def test_describe_state_includes_hint_when_built_slot_exists(self):
+        """Integration check: the hint actually surfaces in describe_state
+        output. Without this we could regress the call site silently."""
+        raw = {
+            "mana": 190, "mana_max": 200,
+            "action_count": 5, "max_steps": 100,
+            "mode_number": "add",
+            "slots": [
+                _slot(occupied=False),                          # new
+                _slot(occupied=True, card_mana=72, merges=2,
+                      number_value=4.0, number_active=True),    # build 1
+                _slot(occupied=False),
+                _slot(occupied=False),
+                _slot(occupied=False),
+                _slot(occupied=False),
+                _slot(occupied=False),
+            ],
+            "valid_actions": [0, 32, 37],
+        }
+        out = describe_state(raw)
+        assert "Sell hint" in out
+        assert "slot 1" in out
+        assert "raise Best" in out
+
+    def test_describe_state_skips_hint_with_no_built_slots(self):
+        raw = {
+            "mana": 200, "mana_max": 200,
+            "action_count": 0, "max_steps": 100,
+            "mode_number": "add",
+            "slots": [_slot(occupied=False) for _ in range(7)],
+            "valid_actions": [0, 37],
+        }
+        out = describe_state(raw)
+        assert "Sell hint" not in out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -473,3 +746,202 @@ class TestLLMAgent:
         # The trim must have actually fired — without it the count would grow
         # unbounded to ~2*(MAX_HISTORY_TURNS+5).
         assert len(agent._messages) < 2 * (MAX_HISTORY_TURNS + 5)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Vision-mode leak guards
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestVisionLeakGuards:
+    """End-to-end check that enabling ``use_screenshot=True`` on the agent
+    produces a prompt whose text side carries NO card attributes — not in
+    the system prompt legend, not in the current-state dump, and not in the
+    compact-mode trail.
+    """
+
+    def _vision_slot(self):
+        return {
+            "occupied": True, "card_mana": 15, "merges_done": 1,
+            "number_value": 3, "number_active": True,
+            "color_r": 1.0, "color_g": 0.0, "color_b": 0.0,
+            "shape_index": 2,
+            "word_value": "apple",
+        }
+
+    def test_compact_trail_vision_strips_attributes(self):
+        slots = [self._vision_slot(), {"occupied": False}]
+        entry = format_trail_entry(
+            step_idx=3,
+            slots_before=slots,
+            action=0,  # a0:draw — does not mention any slot, keeps assertions clean
+            mana_before=200.0,
+            mana_after=215.0,
+            hide_perceptual_attrs=True,
+        )
+        # The vision-mode cell marker for an occupied slot
+        assert "X,m15,x1" in entry
+        # Isolate the cell row (between [ and ]) so the action annotation
+        # doesn't false-positive our "no per-dim tokens" assertions.
+        row = entry.split("[", 1)[1].split("]", 1)[0]
+        assert ",R," not in row
+        assert ",G," not in row
+        assert ",B," not in row
+        assert "+3" not in row
+        assert "-3" not in row
+        assert "s2" not in row
+        assert "[apple]" not in row
+
+    def test_compact_trail_metadata_still_has_attributes(self):
+        """Sanity: the default (metadata) path must still emit per-dim tokens."""
+        slots = [self._vision_slot(), {"occupied": False}]
+        entry = format_trail_entry(
+            step_idx=3,
+            slots_before=slots,
+            action=0,
+            mana_before=200.0,
+            mana_after=215.0,
+        )
+        row = entry.split("[", 1)[1].split("]", 1)[0]
+        # Number and colour tokens should be present (we had a R=1.0 card)
+        assert "+3" in row
+        assert ",R," in row
+
+    def test_compact_trail_vision_preserves_hidden_cells(self):
+        """Memory-hidden cards keep their '?' marker regardless of mode."""
+        slots = [
+            {"occupied": True, "card_mana": 15, "merges_done": 0, "memory_hidden": True},
+            {"occupied": False},
+        ]
+        entry = format_trail_entry(
+            step_idx=0,
+            slots_before=slots,
+            action=0,
+            mana_before=200.0,
+            mana_after=205.0,
+            hide_perceptual_attrs=True,
+        )
+        assert "?,m15,x0" in entry
+        assert "X,m15" not in entry  # hidden marker takes precedence
+
+    def test_build_system_prompt_selects_vision_legend(self):
+        out = build_system_prompt(
+            {"number": "add"},
+            include_history_legend=True,
+            vision_legend=True,
+        )
+        assert "HISTORY FORMAT (compact mode, vision)" in out
+        assert "screenshot is your only source" in out
+        # The metadata legend header must NOT be present.
+        assert "HISTORY FORMAT (compact mode) ====" not in out
+
+    def test_build_system_prompt_selects_metadata_legend_by_default(self):
+        out = build_system_prompt(
+            {"number": "add"},
+            include_history_legend=True,
+        )
+        assert "HISTORY FORMAT (compact mode) ====" in out
+        assert "vision" not in out.split("HISTORY FORMAT")[1].splitlines()[0]
+
+    def test_llm_agent_vision_compact_no_attribute_leak(self):
+        """End-to-end: a vision + compact LLMAgent's outgoing user text must
+        contain zero per-dim tokens, and its system prompt must carry the
+        vision legend."""
+        prov = StubProvider(reply="ACTION: 0")
+        agent = LLMAgent(
+            provider=prov,
+            prompt=get_default_prompt(),
+            mode="compact",
+            use_screenshot=True,
+            game_modes={"number": "add", "color": "add", "shape": "triangle"},
+        )
+
+        info = {
+            "raw_state": {
+                "mana": 200, "mana_max": 200,
+                "action_count": 0, "max_steps": 100,
+                "slots": [
+                    {
+                        "occupied": True, "card_mana": 15, "merges_done": 1,
+                        "number_value": 3, "number_active": True,
+                        "color_r": 1.0, "color_g": 0.0, "color_b": 0.0,
+                        "shape_index": 2, "word_value": "apple",
+                    },
+                    {"occupied": False},
+                ],
+                "mode_number": "add",
+                "mode_color": "add",
+                "mode_shape": "triangle",
+                "valid_actions": [0, 37],
+            },
+            "screenshot": np.zeros((4, 4, 3), dtype=np.uint8),
+        }
+        agent.act(_make_obs(), info)
+
+        # 1) System prompt: vision legend, not metadata legend
+        system = prov.calls[0]["system"]
+        assert "HISTORY FORMAT (compact mode, vision)" in system
+        assert "HISTORY FORMAT (compact mode) ====" not in system
+
+        # 2) User text block: no per-dim tokens
+        content = prov.calls[0]["messages"][0]["content"]
+        text_blocks = [b["text"] for b in content if b.get("type") == "text"]
+        assert len(text_blocks) == 1
+        text = text_blocks[0]
+        assert "Num=" not in text
+        assert "Color=" not in text
+        assert "Shape=" not in text
+        assert "Word=" not in text
+        assert "see screenshot" in text
+
+    def test_llm_agent_vision_trail_stays_stripped_after_step(self):
+        """After on_step_result finalises a trail entry, the next act() call
+        must still carry attribute-free trail cells — regression guard for
+        threading use_screenshot into format_trail_entry."""
+        prov = StubProvider(reply="ACTION: 0")
+        agent = LLMAgent(
+            provider=prov,
+            prompt=get_default_prompt(),
+            mode="compact",
+            use_screenshot=True,
+            game_modes={"number": "add", "color": "add"},
+        )
+
+        info1 = {
+            "raw_state": {
+                "mana": 200, "mana_max": 200,
+                "slots": [
+                    {
+                        "occupied": True, "card_mana": 15, "merges_done": 1,
+                        "number_value": 3, "number_active": True,
+                        "color_r": 1.0, "color_g": 0.0, "color_b": 0.0,
+                    },
+                ],
+                "mode_number": "add",
+                "mode_color": "add",
+                "valid_actions": [0, 37],
+            },
+            "screenshot": np.zeros((4, 4, 3), dtype=np.uint8),
+        }
+        agent.act(_make_obs(), info1)
+        agent.on_step_result(
+            action=0, reward=0.0, terminated=False,
+            info={"raw_state": {"mana": 215, "mana_max": 215}},
+        )
+
+        # Second act pass — the trail should now contain one entry
+        info2 = {
+            "raw_state": dict(info1["raw_state"]),
+            "screenshot": np.zeros((4, 4, 3), dtype=np.uint8),
+        }
+        agent.act(_make_obs(), info2)
+
+        text = next(
+            b["text"] for b in prov.calls[1]["messages"][0]["content"]
+            if b.get("type") == "text"
+        )
+        assert "PAST STEPS" in text
+        assert "X,m15,x1" in text      # attribute-stripped trail cell
+        # And the per-dim tokens from the source slot must not leak anywhere
+        assert "+3" not in text
+        assert ",R," not in text

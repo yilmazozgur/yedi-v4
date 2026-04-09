@@ -7,25 +7,107 @@
 {% block content %}
 <div class="card">
     <div class="card-title">Analysis dashboard</div>
-    <p class="card-sub">Pulls completed run records and aggregates per dimension. One bar per agent per game config; one chart per cognitive dimension.</p>
-    <div class="form-row" style="max-width: 320px;">
-        <label for="a-dim-filter">Filter dimension</label>
-        <select id="a-dim-filter">
-            <option value="">All dimensions</option>
-        </select>
+    <p class="card-sub">
+        Slice completed runs by agent, mode, ablation, max-steps, and game
+        config. The primary chart auto-picks its axes from whichever filter
+        dimensions still vary after you narrow things down — with an override
+        dropdown right above it. If no filters are applied, the page falls
+        back to the per-dimension overview.
+    </p>
+
+    <div class="form-grid">
+        <div class="form-row">
+            <label>Mode</label>
+            <div class="checkbox-row" id="a-mode-filter"></div>
+        </div>
+        <div class="form-row">
+            <label>Max steps</label>
+            <select id="a-max-steps-filter">
+                <option value="">All</option>
+            </select>
+        </div>
     </div>
+
+    <div class="form-grid" style="margin-top: 16px;">
+        <div class="form-row">
+            <label>Show merge previews (ablation)</label>
+            <div class="seg-toggle" id="a-show-previews-filter" data-value="any">
+                <button type="button" data-val="any" class="is-active">Any</button>
+                <button type="button" data-val="on">On</button>
+                <button type="button" data-val="off">Off</button>
+            </div>
+        </div>
+        <div class="form-row">
+            <label>Perfect memory (ablation)</label>
+            <div class="seg-toggle" id="a-perfect-memory-filter" data-value="any">
+                <button type="button" data-val="any" class="is-active">Any</button>
+                <button type="button" data-val="on">On</button>
+                <button type="button" data-val="off">Off</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="form-row" style="margin-top: 16px;">
+        <label>Agents</label>
+        <div class="checkbox-row" id="a-agent-filter">Loading…</div>
+    </div>
+
+    <div class="form-row" style="margin-top: 16px;">
+        <label>Configs</label>
+        <div class="tier-buttons" id="a-tier-buttons"></div>
+        <div class="checkbox-row" id="a-config-picker">Loading…</div>
+    </div>
+
+    <div class="form-actions">
+        <span class="dim mono" id="a-filter-summary">—</span>
+        <button type="button" class="btn btn-ghost" id="a-reset-filters">Reset filters</button>
+    </div>
+</div>
+
+<div class="stat-grid" style="margin-top: 16px;">
+    <div class="stat"><div class="stat-value" id="a-stat-runs">—</div><div class="stat-label">Runs</div></div>
+    <div class="stat"><div class="stat-value" id="a-stat-episodes">—</div><div class="stat-label">Episodes</div></div>
+    <div class="stat"><div class="stat-value" id="a-stat-mean-mana">—</div><div class="stat-label">Mean max mana</div></div>
+    <div class="stat"><div class="stat-value" id="a-stat-best-mana">—</div><div class="stat-label">Best single run</div></div>
 </div>
 
 <div id="dimension-charts"></div>
 
+<div class="card" id="a-ablation-card" style="display: none;">
+    <div class="card-title">Ablation delta</div>
+    <p class="card-sub">
+        Side-by-side of every (agent · mode · max-steps · config) tuple that
+        has both On and Off variants of an ablation flag in the filtered set.
+        Bars show mean max mana; the Δ label is the on-minus-off difference.
+        Positive Δ means the ablation <em>helped</em>.
+    </p>
+    <div id="a-ablation-charts"></div>
+</div>
+
 <div class="card">
     <div class="card-title">Per-config leaderboard</div>
     <table class="table">
-        <thead><tr><th>Config</th><th>Best agent</th><th>Best mean mana</th><th>Runs</th></tr></thead>
+        <thead>
+            <tr>
+                <th>Config</th>
+                <th>Best agent</th>
+                <th>Mode</th>
+                <th>Max steps</th>
+                <th>Mean ± std</th>
+                <th>Best run</th>
+                <th>Episodes</th>
+            </tr>
+        </thead>
         <tbody id="leaderboard-tbody">
-            <tr><td colspan="4" class="empty-state">Loading…</td></tr>
+            <tr><td colspan="7" class="empty-state">Loading…</td></tr>
         </tbody>
     </table>
+</div>
+
+<div class="card" id="a-distribution-card">
+    <div class="card-title">Per-episode distribution</div>
+    <p class="card-sub">Box plot of per-episode max mana within the filter. One box per X-axis value from the primary chart — surfaces variance that the bar chart's mean hides.</p>
+    <div id="a-distribution-chart" class="dim-chart"></div>
 </div>
 {% endblock %}
 
@@ -34,117 +116,759 @@
 (async function () {
     const { api, clear, escapeHtml, fmtNum, toastError } = window.YediApp;
 
+    // ──────────────────────────────────────────────────────────────────
+    // Constants — filter options and the auto-axis priority order.
+    //
+    // PRIORITY drives the auto-axis logic: when "Group by" is on Auto,
+    // we pick the first dimension from this list whose value still varies
+    // across the filtered episodes. The runner-up (also >1 unique value)
+    // becomes the chart's series (bar group). Keep this in dependency
+    // order: configs are what you most often want as X because each one
+    // is a distinct cognitive task; mode / agent / ablation are typically
+    // "what explains the spread within a task" — more naturally series.
+    // ──────────────────────────────────────────────────────────────────
+    const MODE_VALUES = [
+        "metadata-a", "metadata-b", "metadata-c",
+        "vision-a",   "vision-b",   "vision-c",
+    ];
+    const AUTO_AXIS_PRIORITY = ["config", "mode", "agent", "maxSteps", "ablation"];
+
+    const PLOT_LAYOUT_BASE = {
+        paper_bgcolor: "#181825",
+        plot_bgcolor:  "#181825",
+        font: { color: "#e8e8f0" },
+        margin: { t: 20, l: 60, r: 20, b: 90 },
+        xaxis: { tickangle: -30 },
+        legend: { orientation: "h" },
+    };
+
+    // ──────────────────────────────────────────────────────────────────
+    // State — the filter panel + group-by override.
+    //
+    // All sets empty / all tri-states "any" / empty string for the step
+    // dropdown means "no filter, show everything". The derived flat
+    // episode table `allRows` is populated once on load; every filter
+    // change runs applyFilters() over it without re-fetching.
+    // ──────────────────────────────────────────────────────────────────
+    const state = {
+        agents: new Set(),        // agent ids; empty = all
+        modes: new Set(),         // e.g. "metadata-a"; empty = all
+        showPreviews: "any",      // "any" | "on" | "off"
+        perfectMemory: "any",
+        maxSteps: "",             // "" = all, else number as string
+        configs: new Set(),       // config names; empty = all
+        groupBy: "auto",          // "auto" | "config" | "mode" | "agent" | "maxSteps" | "ablation"
+    };
+
+    // Populated on load
+    let allRows = [];             // flat per-episode rows
+    let configToTier = {};        // { "easy_math_add": "EASY" }
+    let tiers = {};               // { "EASY": ["easy_math_add", ...] }
+    let allConfigNames = [];      // full config list from /api/configs
+    let agentIdToName = {};       // stable id → latest display name
+
+    // ──────────────────────────────────────────────────────────────────
+    // Helpers
+    // ──────────────────────────────────────────────────────────────────
     function dimensionOf(configName) {
         // Convention used by benchmark_configs.py: "<tier>_<dimension>_<mode>"
         const parts = (configName || "").split("_");
         return parts.length >= 2 ? parts[1] : "other";
     }
 
-    async function load() {
-        try {
-            const runs = await api.get("/api/runs");
-            const completed = runs.filter((r) => r.status === "completed");
-
-            // Aggregate: dimension -> config -> agent -> mean_max_mana[]
-            const agg = {};
-            const allDims = new Set();
-            for (const r of completed) {
-                const agentName = (r.agent_snapshot && r.agent_snapshot.name) || "unknown";
-                for (const [cfgName, cr] of Object.entries(r.results || {})) {
-                    const dim = dimensionOf(cfgName);
-                    allDims.add(dim);
-                    agg[dim] = agg[dim] || {};
-                    agg[dim][cfgName] = agg[dim][cfgName] || {};
-                    agg[dim][cfgName][agentName] = agg[dim][cfgName][agentName] || [];
-                    agg[dim][cfgName][agentName].push(cr.mean_max_mana || 0);
-                }
-            }
-
-            const dimSelect = document.getElementById("a-dim-filter");
-            for (const d of Array.from(allDims).sort()) {
-                const opt = document.createElement("option");
-                opt.value = d; opt.textContent = d;
-                dimSelect.appendChild(opt);
-            }
-
-            function renderCharts(filterDim) {
-                const host = document.getElementById("dimension-charts");
-                clear(host);
-                const dims = filterDim ? [filterDim] : Array.from(allDims).sort();
-                if (dims.length === 0) {
-                    host.innerHTML = `<div class="card empty-state">No completed runs yet.</div>`;
-                    return;
-                }
-                for (const dim of dims) {
-                    const card = document.createElement("div");
-                    card.className = "card";
-                    card.innerHTML = `<div class="card-title">${escapeHtml(dim)}</div><div class="dim-chart" id="chart-${escapeHtml(dim)}"></div>`;
-                    host.appendChild(card);
-
-                    const cfgs = Object.keys(agg[dim] || {}).sort();
-                    const agentNames = new Set();
-                    for (const c of cfgs) Object.keys(agg[dim][c]).forEach((a) => agentNames.add(a));
-
-                    const traces = [];
-                    for (const a of agentNames) {
-                        traces.push({
-                            type: "bar",
-                            name: a,
-                            x: cfgs,
-                            y: cfgs.map((c) => {
-                                const arr = (agg[dim][c] || {})[a] || [];
-                                return arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
-                            }),
-                        });
-                    }
-                    Plotly.newPlot(`chart-${dim}`, traces, {
-                        barmode: "group",
-                        paper_bgcolor: "#181825",
-                        plot_bgcolor: "#181825",
-                        font: { color: "#e8e8f0" },
-                        margin: { t: 20, l: 50, r: 20, b: 80 },
-                        xaxis: { tickangle: -30 },
-                        yaxis: { title: "Mean max mana" },
-                        legend: { orientation: "h" },
-                    }, { displayModeBar: false, responsive: true });
-                }
-            }
-
-            renderCharts("");
-            dimSelect.addEventListener("change", () => renderCharts(dimSelect.value));
-
-            // Leaderboard: best agent per config across all completed runs
-            const board = {};
-            for (const r of completed) {
-                const agentName = (r.agent_snapshot && r.agent_snapshot.name) || "unknown";
-                for (const [cfgName, cr] of Object.entries(r.results || {})) {
-                    board[cfgName] = board[cfgName] || { runs: 0, best: -Infinity, bestAgent: "—" };
-                    board[cfgName].runs += 1;
-                    if ((cr.mean_max_mana || 0) > board[cfgName].best) {
-                        board[cfgName].best = cr.mean_max_mana || 0;
-                        board[cfgName].bestAgent = agentName;
-                    }
-                }
-            }
-            const tbody = document.getElementById("leaderboard-tbody");
-            clear(tbody);
-            const entries = Object.entries(board).sort((a, b) => a[0].localeCompare(b[0]));
-            if (entries.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No completed runs yet.</td></tr>`;
-            } else {
-                for (const [name, info] of entries) {
-                    const tr = document.createElement("tr");
-                    tr.innerHTML = `<td class="col-mono">${escapeHtml(name)}</td>
-                                    <td>${escapeHtml(info.bestAgent)}</td>
-                                    <td>${fmtNum(info.best)}</td>
-                                    <td>${info.runs}</td>`;
-                    tbody.appendChild(tr);
-                }
-            }
-        } catch (e) { toastError(e); }
+    function ablationLabel(row) {
+        return `prev=${row.showPreviews ? "on" : "off"}·mem=${row.perfectMemory ? "on" : "off"}`;
     }
 
-    load();
+    function rowValue(row, key) {
+        switch (key) {
+            case "config":    return row.config;
+            case "mode":      return row.mode;
+            case "agent":     return row.agentName;
+            case "maxSteps":  return String(row.maxSteps);
+            case "ablation":  return ablationLabel(row);
+            default:          return "?";
+        }
+    }
+
+    function distinctCount(rows, key) {
+        const s = new Set();
+        for (const r of rows) s.add(rowValue(r, key));
+        return s.size;
+    }
+
+    function mean(arr) {
+        if (!arr.length) return 0;
+        return arr.reduce((s, v) => s + v, 0) / arr.length;
+    }
+
+    function stddev(arr) {
+        if (arr.length < 2) return 0;
+        const m = mean(arr);
+        const v = arr.reduce((s, x) => s + (x - m) * (x - m), 0) / arr.length;
+        return Math.sqrt(v);
+    }
+
+    function humanKey(k) {
+        return { config: "Config", mode: "Mode", agent: "Agent", maxSteps: "Max steps", ablation: "Ablation" }[k] || k;
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Data load — fetch everything we need in parallel, then flatten
+    // completed runs into per-episode rows.
+    // ──────────────────────────────────────────────────────────────────
+    async function loadAll() {
+        try {
+            const [runs, cfgData] = await Promise.all([
+                api.get("/api/runs"),
+                api.get("/api/configs"),
+            ]);
+
+            tiers = cfgData.tiers || {};
+            allConfigNames = Object.keys(cfgData.configs || {});
+            for (const [tierName, names] of Object.entries(tiers)) {
+                for (const n of names) configToTier[n] = tierName;
+            }
+
+            const rows = [];
+            const completed = runs.filter((r) => r.status === "completed");
+            for (const r of completed) {
+                const snap = r.agent_snapshot || {};
+                const agentId = snap.id || "unknown";
+                const agentName = snap.name || "unknown";
+                // Track the most recent name per id so rename races don't
+                // explode into two filter rows.
+                agentIdToName[agentId] = agentName;
+
+                for (const [cfgName, cr] of Object.entries(r.results || {})) {
+                    const tier = configToTier[cfgName] || "unknown";
+                    const dim = dimensionOf(cfgName);
+                    for (const ep of (cr.episodes || [])) {
+                        rows.push({
+                            runId: r.id,
+                            startedAt: r.started_at,
+                            agentId,
+                            agentName,
+                            mode: r.mode,
+                            showPreviews: !!r.show_merge_previews,
+                            perfectMemory: !!r.perfect_memory,
+                            maxSteps: r.max_steps,
+                            config: cfgName,
+                            tier,
+                            dimension: dim,
+                            episodeIdx: ep.episode_idx,
+                            maxMana: ep.max_mana || 0,
+                            totalReward: ep.total_reward || 0,
+                            steps: ep.steps || 0,
+                            gameOver: !!ep.game_over,
+                        });
+                    }
+                }
+            }
+            allRows = rows;
+            buildFilterControls();
+            applyFilters();
+        } catch (e) {
+            toastError(e);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Filter controls — mode / agent / max-steps / configs / ablations.
+    // We build them once from the loaded rows (agents, max-steps) and
+    // from /api/configs (configs, tiers).
+    // ──────────────────────────────────────────────────────────────────
+    function buildFilterControls() {
+        // Mode — fixed 6 values, always rendered
+        const modeHost = document.getElementById("a-mode-filter");
+        clear(modeHost);
+        for (const m of MODE_VALUES) {
+            const lbl = document.createElement("label");
+            const cb = document.createElement("input");
+            cb.type = "checkbox"; cb.value = m;
+            cb.addEventListener("change", () => {
+                if (cb.checked) state.modes.add(m);
+                else state.modes.delete(m);
+                applyFilters();
+            });
+            lbl.appendChild(cb);
+            lbl.appendChild(document.createTextNode(" " + m));
+            modeHost.appendChild(lbl);
+        }
+
+        // Agents — derived from the loaded rows
+        const agentHost = document.getElementById("a-agent-filter");
+        clear(agentHost);
+        const agentIds = Object.keys(agentIdToName).sort((a, b) =>
+            agentIdToName[a].localeCompare(agentIdToName[b]));
+        if (agentIds.length === 0) {
+            agentHost.innerHTML = `<div class="dim">No completed runs yet.</div>`;
+        } else {
+            for (const id of agentIds) {
+                const lbl = document.createElement("label");
+                const cb = document.createElement("input");
+                cb.type = "checkbox"; cb.value = id;
+                cb.addEventListener("change", () => {
+                    if (cb.checked) state.agents.add(id);
+                    else state.agents.delete(id);
+                    applyFilters();
+                });
+                lbl.appendChild(cb);
+                lbl.appendChild(document.createTextNode(" " + agentIdToName[id]));
+                agentHost.appendChild(lbl);
+            }
+        }
+
+        // Max steps — distinct values seen in the data
+        const msSelect = document.getElementById("a-max-steps-filter");
+        clear(msSelect);
+        const allOpt = document.createElement("option");
+        allOpt.value = ""; allOpt.textContent = "All";
+        msSelect.appendChild(allOpt);
+        const distinctSteps = Array.from(new Set(allRows.map((r) => r.maxSteps))).sort((a, b) => a - b);
+        for (const v of distinctSteps) {
+            const opt = document.createElement("option");
+            opt.value = String(v); opt.textContent = String(v);
+            msSelect.appendChild(opt);
+        }
+        msSelect.addEventListener("change", () => {
+            state.maxSteps = msSelect.value;
+            applyFilters();
+        });
+
+        // Ablation tri-states
+        wireSegToggle("a-show-previews-filter", (val) => {
+            state.showPreviews = val;
+            applyFilters();
+        });
+        wireSegToggle("a-perfect-memory-filter", (val) => {
+            state.perfectMemory = val;
+            applyFilters();
+        });
+
+        // Tier buttons + config picker — mirrors Benchmark page
+        const tierBar = document.getElementById("a-tier-buttons");
+        clear(tierBar);
+        for (const tierName of Object.keys(tiers)) {
+            const btn = document.createElement("button");
+            btn.type = "button"; btn.className = "btn btn-sm";
+            btn.textContent = tierName;
+            btn.addEventListener("click", () => selectTier(tierName));
+            tierBar.appendChild(btn);
+        }
+        const allBtn = document.createElement("button");
+        allBtn.type = "button"; allBtn.className = "btn btn-sm";
+        allBtn.textContent = "All";
+        allBtn.addEventListener("click", () => selectAllConfigs());
+        tierBar.appendChild(allBtn);
+
+        const noneBtn = document.createElement("button");
+        noneBtn.type = "button"; noneBtn.className = "btn btn-sm btn-ghost";
+        noneBtn.textContent = "Clear";
+        noneBtn.addEventListener("click", () => selectNoneConfigs());
+        tierBar.appendChild(noneBtn);
+
+        const cfgHost = document.getElementById("a-config-picker");
+        clear(cfgHost);
+        for (const name of allConfigNames) {
+            const lbl = document.createElement("label");
+            const cb = document.createElement("input");
+            cb.type = "checkbox"; cb.value = name; cb.dataset.config = name;
+            cb.addEventListener("change", () => {
+                if (cb.checked) state.configs.add(name);
+                else state.configs.delete(name);
+                applyFilters();
+            });
+            lbl.appendChild(cb);
+            lbl.appendChild(document.createTextNode(" " + name));
+            cfgHost.appendChild(lbl);
+        }
+
+        // Reset button
+        document.getElementById("a-reset-filters").addEventListener("click", resetFilters);
+    }
+
+    function wireSegToggle(hostId, onChange) {
+        const host = document.getElementById(hostId);
+        host.querySelectorAll("button").forEach((b) => {
+            b.addEventListener("click", () => {
+                host.querySelectorAll("button").forEach((x) => x.classList.remove("is-active"));
+                b.classList.add("is-active");
+                host.dataset.value = b.dataset.val;
+                onChange(b.dataset.val);
+            });
+        });
+    }
+
+    function selectTier(tierName) {
+        const set = new Set(tiers[tierName] || []);
+        state.configs = new Set(set);
+        document.querySelectorAll("#a-config-picker input[type=checkbox]").forEach((cb) => {
+            cb.checked = set.has(cb.value);
+        });
+        applyFilters();
+    }
+
+    function selectAllConfigs() {
+        state.configs = new Set(allConfigNames);
+        document.querySelectorAll("#a-config-picker input[type=checkbox]").forEach((cb) => {
+            cb.checked = true;
+        });
+        applyFilters();
+    }
+
+    function selectNoneConfigs() {
+        state.configs.clear();
+        document.querySelectorAll("#a-config-picker input[type=checkbox]").forEach((cb) => {
+            cb.checked = false;
+        });
+        applyFilters();
+    }
+
+    function resetFilters() {
+        state.agents.clear();
+        state.modes.clear();
+        state.showPreviews = "any";
+        state.perfectMemory = "any";
+        state.maxSteps = "";
+        state.configs.clear();
+        state.groupBy = "auto";
+
+        document.querySelectorAll("#a-mode-filter input[type=checkbox]").forEach((cb) => cb.checked = false);
+        document.querySelectorAll("#a-agent-filter input[type=checkbox]").forEach((cb) => cb.checked = false);
+        document.querySelectorAll("#a-config-picker input[type=checkbox]").forEach((cb) => cb.checked = false);
+        document.getElementById("a-max-steps-filter").value = "";
+        ["a-show-previews-filter", "a-perfect-memory-filter"].forEach((id) => {
+            const host = document.getElementById(id);
+            host.dataset.value = "any";
+            host.querySelectorAll("button").forEach((b) => {
+                b.classList.toggle("is-active", b.dataset.val === "any");
+            });
+        });
+        applyFilters();
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Filter pipeline
+    // ──────────────────────────────────────────────────────────────────
+    function isDefaultFilter() {
+        return state.agents.size === 0
+            && state.modes.size === 0
+            && state.showPreviews === "any"
+            && state.perfectMemory === "any"
+            && state.maxSteps === ""
+            && state.configs.size === 0;
+    }
+
+    function filteredRows() {
+        return allRows.filter((r) => {
+            if (state.agents.size > 0 && !state.agents.has(r.agentId)) return false;
+            if (state.modes.size > 0 && !state.modes.has(r.mode)) return false;
+            if (state.showPreviews === "on" && !r.showPreviews) return false;
+            if (state.showPreviews === "off" && r.showPreviews) return false;
+            if (state.perfectMemory === "on" && !r.perfectMemory) return false;
+            if (state.perfectMemory === "off" && r.perfectMemory) return false;
+            if (state.maxSteps !== "" && String(r.maxSteps) !== state.maxSteps) return false;
+            if (state.configs.size > 0 && !state.configs.has(r.config)) return false;
+            return true;
+        });
+    }
+
+    function applyFilters() {
+        const rows = filteredRows();
+        updateSummary(rows);
+        updateStats(rows);
+        renderMainChart(rows);
+        renderAblationCard(rows);
+        renderLeaderboard(rows);
+        renderDistribution(rows);
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Summary + stat strip
+    // ──────────────────────────────────────────────────────────────────
+    function updateSummary(rows) {
+        const runIds = new Set(rows.map((r) => r.runId));
+        const el = document.getElementById("a-filter-summary");
+        el.textContent = `${runIds.size} runs · ${rows.length} episodes`;
+    }
+
+    function updateStats(rows) {
+        const runIds = new Set(rows.map((r) => r.runId));
+        const manas = rows.map((r) => r.maxMana);
+        document.getElementById("a-stat-runs").textContent = String(runIds.size);
+        document.getElementById("a-stat-episodes").textContent = String(rows.length);
+        document.getElementById("a-stat-mean-mana").textContent =
+            rows.length ? fmtNum(mean(manas), 0) : "—";
+        document.getElementById("a-stat-best-mana").textContent =
+            rows.length ? fmtNum(Math.max(...manas), 0) : "—";
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Main chart — renders either the per-dimension overview (default,
+    // no filters) or the auto-axis primary chart (any filter active).
+    // Preserves id="dimension-charts" as the host so the existing
+    // smoke test still passes and so the fallback layout reuses the
+    // same DOM region.
+    // ──────────────────────────────────────────────────────────────────
+    function renderMainChart(rows) {
+        const host = document.getElementById("dimension-charts");
+        clear(host);
+
+        if (rows.length === 0) {
+            host.innerHTML = `<div class="card empty-state">No episodes match the current filter.</div>`;
+            return;
+        }
+
+        if (isDefaultFilter()) {
+            renderDimensionOverview(host, rows);
+            return;
+        }
+
+        renderPrimaryChart(host, rows);
+    }
+
+    function renderDimensionOverview(host, rows) {
+        // One chart per cognitive dimension, grouped bars by agent × config.
+        // This is the "accumulated view" — same behaviour the legacy page
+        // shipped with, now a fallback for the no-filter state.
+        const byDim = {};
+        for (const r of rows) {
+            byDim[r.dimension] = byDim[r.dimension] || {};
+            const d = byDim[r.dimension];
+            d[r.config] = d[r.config] || {};
+            d[r.config][r.agentName] = d[r.config][r.agentName] || [];
+            d[r.config][r.agentName].push(r.maxMana);
+        }
+        const dims = Object.keys(byDim).sort();
+        for (const dim of dims) {
+            const card = document.createElement("div");
+            card.className = "card";
+            const title = document.createElement("div");
+            title.className = "card-title";
+            title.textContent = dim;
+            card.appendChild(title);
+            const chart = document.createElement("div");
+            chart.className = "dim-chart";
+            chart.id = `chart-${dim}`;
+            card.appendChild(chart);
+            host.appendChild(card);
+
+            const cfgs = Object.keys(byDim[dim]).sort();
+            const agentNames = new Set();
+            for (const c of cfgs) Object.keys(byDim[dim][c]).forEach((a) => agentNames.add(a));
+            const traces = [];
+            for (const a of Array.from(agentNames).sort()) {
+                traces.push({
+                    type: "bar",
+                    name: a,
+                    x: cfgs,
+                    y: cfgs.map((c) => {
+                        const arr = (byDim[dim][c] || {})[a] || [];
+                        return arr.length ? mean(arr) : null;
+                    }),
+                });
+            }
+            Plotly.newPlot(chart.id, traces, Object.assign({}, PLOT_LAYOUT_BASE, {
+                barmode: "group",
+                yaxis: { title: "Mean max mana" },
+            }), { displayModeBar: false, responsive: true });
+        }
+    }
+
+    function pickAutoAxis(rows) {
+        const varied = AUTO_AXIS_PRIORITY.filter((k) => distinctCount(rows, k) > 1);
+        if (varied.length === 0) return { x: "config", series: null };
+        return { x: varied[0], series: varied[1] || null };
+    }
+
+    function renderPrimaryChart(host, rows) {
+        // One big card: breadcrumb + group-by dropdown + chart.
+        const card = document.createElement("div");
+        card.className = "card";
+
+        const header = document.createElement("div");
+        header.className = "chart-header";
+        const crumb = document.createElement("div");
+        crumb.className = "chart-breadcrumb";
+        const rightCtls = document.createElement("div");
+        rightCtls.className = "flex-row";
+        const gbLabel = document.createElement("label");
+        gbLabel.textContent = "Group by: ";
+        gbLabel.className = "dim mono";
+        const gbSel = document.createElement("select");
+        for (const [val, text] of [
+            ["auto", "Auto"],
+            ["config", "Config"],
+            ["mode", "Mode"],
+            ["agent", "Agent"],
+            ["maxSteps", "Max steps"],
+            ["ablation", "Ablation"],
+        ]) {
+            const opt = document.createElement("option");
+            opt.value = val; opt.textContent = text;
+            if (state.groupBy === val) opt.selected = true;
+            gbSel.appendChild(opt);
+        }
+        gbSel.addEventListener("change", () => {
+            state.groupBy = gbSel.value;
+            applyFilters();
+        });
+        rightCtls.appendChild(gbLabel);
+        rightCtls.appendChild(gbSel);
+        header.appendChild(crumb);
+        header.appendChild(rightCtls);
+        card.appendChild(header);
+
+        const chart = document.createElement("div");
+        chart.className = "dim-chart";
+        chart.id = "a-primary-chart";
+        card.appendChild(chart);
+        host.appendChild(card);
+
+        // Resolve axes
+        let xKey, seriesKey;
+        if (state.groupBy === "auto") {
+            const picked = pickAutoAxis(rows);
+            xKey = picked.x;
+            seriesKey = picked.series;
+        } else {
+            xKey = state.groupBy;
+            // Pick the runner-up from the priority list as series
+            const remaining = AUTO_AXIS_PRIORITY.filter((k) => k !== xKey && distinctCount(rows, k) > 1);
+            seriesKey = remaining[0] || null;
+        }
+
+        crumb.textContent = `X: ${humanKey(xKey)}` + (seriesKey ? ` · Series: ${humanKey(seriesKey)}` : "");
+
+        // Aggregate: xVal → seriesVal → list of maxMana
+        const agg = {};
+        const xValues = new Set();
+        const seriesValues = new Set();
+        for (const r of rows) {
+            const xv = rowValue(r, xKey);
+            const sv = seriesKey ? rowValue(r, seriesKey) : "__single__";
+            xValues.add(xv);
+            seriesValues.add(sv);
+            agg[sv] = agg[sv] || {};
+            agg[sv][xv] = agg[sv][xv] || [];
+            agg[sv][xv].push(r.maxMana);
+        }
+        const xSorted = Array.from(xValues).sort();
+        const sSorted = Array.from(seriesValues).sort();
+
+        const traces = [];
+        for (const sv of sSorted) {
+            traces.push({
+                type: "bar",
+                name: seriesKey ? sv : "mean max mana",
+                x: xSorted,
+                y: xSorted.map((xv) => {
+                    const arr = (agg[sv] || {})[xv] || [];
+                    return arr.length ? mean(arr) : null;
+                }),
+                error_y: {
+                    type: "data",
+                    array: xSorted.map((xv) => {
+                        const arr = (agg[sv] || {})[xv] || [];
+                        return arr.length > 1 ? stddev(arr) : 0;
+                    }),
+                    visible: true,
+                    color: "rgba(232, 232, 240, 0.4)",
+                },
+            });
+        }
+        Plotly.newPlot(chart.id, traces, Object.assign({}, PLOT_LAYOUT_BASE, {
+            barmode: "group",
+            yaxis: { title: "Mean max mana (± std)" },
+        }), { displayModeBar: false, responsive: true });
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Ablation delta — only shown when paired on/off runs exist for the
+    // same (agent, mode, max_steps, config). Hidden otherwise to keep the
+    // page uncluttered.
+    // ──────────────────────────────────────────────────────────────────
+    function renderAblationCard(rows) {
+        const card = document.getElementById("a-ablation-card");
+        const host = document.getElementById("a-ablation-charts");
+        clear(host);
+
+        const pairs = [];
+        for (const flag of ["showPreviews", "perfectMemory"]) {
+            // Group by the 4-tuple we hold fixed
+            const groups = {};
+            for (const r of rows) {
+                const key = [r.agentName, r.mode, r.maxSteps, r.config].join("|");
+                groups[key] = groups[key] || { on: [], off: [], meta: r };
+                (r[flag] ? groups[key].on : groups[key].off).push(r.maxMana);
+            }
+            for (const [key, g] of Object.entries(groups)) {
+                if (g.on.length > 0 && g.off.length > 0) {
+                    pairs.push({
+                        flag,
+                        label: key,
+                        onMean: mean(g.on),
+                        offMean: mean(g.off),
+                        onN: g.on.length,
+                        offN: g.off.length,
+                    });
+                }
+            }
+        }
+
+        if (pairs.length === 0) {
+            card.style.display = "none";
+            return;
+        }
+        card.style.display = "";
+
+        // Render one card per flag that actually has pairs
+        for (const flag of ["showPreviews", "perfectMemory"]) {
+            const flagPairs = pairs.filter((p) => p.flag === flag);
+            if (flagPairs.length === 0) continue;
+
+            const title = document.createElement("div");
+            title.className = "dim mono";
+            title.style.marginTop = "14px";
+            title.style.marginBottom = "6px";
+            title.textContent = flag === "showPreviews"
+                ? "Show merge previews"
+                : "Perfect memory";
+            host.appendChild(title);
+
+            const chart = document.createElement("div");
+            chart.className = "dim-chart";
+            chart.id = `a-ablation-chart-${flag}`;
+            host.appendChild(chart);
+
+            const xs = flagPairs.map((p) => p.label);
+            const traces = [
+                {
+                    type: "bar", name: "off",
+                    x: xs,
+                    y: flagPairs.map((p) => p.offMean),
+                    marker: { color: "#6b7280" },
+                },
+                {
+                    type: "bar", name: "on",
+                    x: xs,
+                    y: flagPairs.map((p) => p.onMean),
+                    marker: { color: "#ef4444" },
+                },
+            ];
+            const annotations = flagPairs.map((p, i) => ({
+                x: xs[i],
+                y: Math.max(p.onMean, p.offMean),
+                yshift: 14,
+                text: `Δ ${(p.onMean - p.offMean >= 0 ? "+" : "") + (p.onMean - p.offMean).toFixed(0)}`,
+                showarrow: false,
+                font: { color: p.onMean >= p.offMean ? "#4ade80" : "#f87171", size: 11 },
+            }));
+            Plotly.newPlot(chart.id, traces, Object.assign({}, PLOT_LAYOUT_BASE, {
+                barmode: "group",
+                yaxis: { title: "Mean max mana" },
+                annotations,
+                margin: { t: 40, l: 60, r: 20, b: 120 },
+            }), { displayModeBar: false, responsive: true });
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Leaderboard
+    // ──────────────────────────────────────────────────────────────────
+    function renderLeaderboard(rows) {
+        // Group by (config, agent, mode, maxSteps) so the table rows match
+        // the granularity of the DB — otherwise a single "config" row hides
+        // the fact that the same agent beat itself at different max-steps
+        // or in a different mode.
+        const buckets = {};
+        for (const r of rows) {
+            const key = [r.config, r.agentName, r.mode, r.maxSteps].join("|");
+            buckets[key] = buckets[key] || {
+                config: r.config, agent: r.agentName, mode: r.mode,
+                maxSteps: r.maxSteps, manas: [],
+            };
+            buckets[key].manas.push(r.maxMana);
+        }
+
+        // For each config, pick the best (by mean) bucket and render it.
+        // Keep a stable secondary sort so repeated renders don't jitter.
+        const perConfig = {};
+        for (const b of Object.values(buckets)) {
+            const m = mean(b.manas);
+            if (!perConfig[b.config] || m > perConfig[b.config].meanMana) {
+                perConfig[b.config] = {
+                    config: b.config,
+                    agent: b.agent,
+                    mode: b.mode,
+                    maxSteps: b.maxSteps,
+                    meanMana: m,
+                    stdMana: stddev(b.manas),
+                    bestMana: Math.max(...b.manas),
+                    episodes: b.manas.length,
+                };
+            }
+        }
+
+        const tbody = document.getElementById("leaderboard-tbody");
+        clear(tbody);
+        const entries = Object.values(perConfig).sort((a, b) => a.config.localeCompare(b.config));
+        if (entries.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No episodes match the current filter.</td></tr>`;
+            return;
+        }
+        for (const e of entries) {
+            const tr = document.createElement("tr");
+            tr.innerHTML =
+                `<td class="col-mono">${escapeHtml(e.config)}</td>` +
+                `<td>${escapeHtml(e.agent)}</td>` +
+                `<td><span class="badge badge-${e.mode.startsWith("vision") ? "vision" : "meta"}">${escapeHtml(e.mode)}</span></td>` +
+                `<td>${escapeHtml(String(e.maxSteps))}</td>` +
+                `<td>${fmtNum(e.meanMana, 0)} ± ${fmtNum(e.stdMana, 0)}</td>` +
+                `<td>${fmtNum(e.bestMana, 0)}</td>` +
+                `<td>${e.episodes}</td>`;
+            tbody.appendChild(tr);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // Per-episode distribution — single box plot whose X grouping tracks
+    // the primary chart's X axis (auto or manual override).
+    // ──────────────────────────────────────────────────────────────────
+    function renderDistribution(rows) {
+        const chart = document.getElementById("a-distribution-chart");
+        const card = document.getElementById("a-distribution-card");
+        if (rows.length === 0) {
+            Plotly.purge(chart);
+            card.style.display = "none";
+            return;
+        }
+        card.style.display = "";
+
+        let xKey;
+        if (state.groupBy === "auto") {
+            xKey = pickAutoAxis(rows).x;
+        } else {
+            xKey = state.groupBy;
+        }
+        const xs = rows.map((r) => rowValue(r, xKey));
+        const ys = rows.map((r) => r.maxMana);
+        Plotly.newPlot(chart, [{
+            type: "box",
+            x: xs,
+            y: ys,
+            boxpoints: "outliers",
+            marker: { color: "#ef4444" },
+            line: { color: "#ef4444" },
+        }], Object.assign({}, PLOT_LAYOUT_BASE, {
+            yaxis: { title: "Max mana per episode" },
+            xaxis: { title: humanKey(xKey), tickangle: -30 },
+            showlegend: false,
+        }), { displayModeBar: false, responsive: true });
+    }
+
+    loadAll();
 })();
 </script>
 {% endblock %}

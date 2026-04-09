@@ -82,8 +82,15 @@ class TestAgentsAPI:
         body = r.json()
         assert "anthropic" in body["providers"]
         assert "openai" in body["providers"]
+        assert "ollama" in body["providers"]  # local VLM path
         assert body["default_models"]["anthropic"]
+        assert body["default_models"]["ollama"]  # curated VLM menu
         assert body["default_api_key_envs"]["anthropic"] == "ANTHROPIC_API_KEY"
+        assert body["default_api_key_envs"]["ollama"] == ""  # no auth for local
+        # The Add-Agent form uses default_base_urls to prefill the URL input
+        # when the user picks a local provider.
+        assert body["default_base_urls"]["ollama"] == "http://localhost:11434"
+        assert body["default_base_urls"]["anthropic"] == ""  # cloud = empty
 
     def test_create_then_get(self, client):
         body = {
@@ -499,6 +506,27 @@ class TestRunsAPI:
         })
         assert r.status_code == 400
 
+    def test_create_run_rejects_vision_with_merge_previews(self, client):
+        """Vision mode + show_merge_previews is incoherent: the preview
+        block leaks memory-hidden card values and trivialises the visual
+        perception test. The UI disables the checkbox on vision modes; the
+        API independently rejects the combination so CLI/test callers can't
+        bypass the UI guard."""
+        agent_id = self._random_agent_id(client)
+        r = client.post("/api/runs", json={
+            "agent_id": agent_id,
+            "mode": "vision-c",
+            "configs": ["easy_math_add"],
+            "episodes_per_config": 1,
+            "max_steps": 5,
+            "show_merge_previews": True,
+        })
+        assert r.status_code == 400
+        assert "vision" in r.json()["detail"].lower()
+        assert "merge_previews" in r.json()["detail"].lower()
+        # And no run record was created.
+        assert client.get("/api/runs").json() == []
+
     def test_create_run_no_game_connected_400(self, client):
         """Run start must refuse when /ws/game has no browser attached."""
         agent_id = self._random_agent_id(client)
@@ -512,6 +540,108 @@ class TestRunsAPI:
         })
         assert r.status_code == 400
         assert "no browser game" in r.json()["detail"].lower()
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Pre-run smoke test
+    #
+    # The /api/runs POST handler probes the agent's provider before spawning
+    # a worker thread, so a misconfigured agent (dead local server, missing
+    # API key, wrong model tag) fails at POST time with a clean 400 instead
+    # of showing up as a FAILED run record with a cryptic error. These tests
+    # pin that contract.
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _llm_agent_id(self, client):
+        """Return the id of the seeded Claude agent (first non-baseline)."""
+        agents = client.get("/api/agents").json()
+        return next(
+            a for a in agents if a["provider"] not in ("random", "greedy")
+        )["id"]
+
+    def test_smoke_test_blocks_run_with_bad_key(self, client, monkeypatch):
+        """An LLM agent with no key must produce a 400 before any run record
+        gets created and before the stubbed runner is touched."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        agent_id = self._llm_agent_id(client)
+
+        called = {"hit": False}
+
+        def _stub(*args, **kwargs):
+            called["hit"] = True
+            raise AssertionError("runner should not be invoked when smoke test fails")
+
+        with patch(
+            "yedi_benchmark.api.run_executor.run_benchmark_with_registry", _stub,
+        ):
+            r = client.post("/api/runs", json={
+                "agent_id": agent_id,
+                "mode": "metadata-a",
+                "configs": ["easy_math_add"],
+                "episodes_per_config": 1,
+                "max_steps": 5,
+            })
+
+        assert r.status_code == 400
+        assert "smoke test failed" in r.json()["detail"].lower()
+        assert called["hit"] is False
+
+        # And no run record was created despite the failed POST.
+        assert client.get("/api/runs").json() == []
+
+    def test_smoke_test_passes_starts_run(self, client, monkeypatch):
+        """With a working provider (mocked litellm), the smoke test passes and
+        the run proceeds normally through the stubbed runner."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
+        agent_id = self._llm_agent_id(client)
+
+        from unittest.mock import MagicMock
+        fake = MagicMock()
+        choice = MagicMock()
+        choice.message.content = "ok"
+        fake.choices = [choice]
+
+        with patch("litellm.completion", return_value=fake), \
+             patch(
+                 "yedi_benchmark.api.run_executor.run_benchmark_with_registry",
+                 _stub_runner(stop_event=None),
+             ):
+            r = client.post("/api/runs", json={
+                "agent_id": agent_id,
+                "mode": "metadata-a",
+                "configs": ["easy_math_add"],
+                "episodes_per_config": 1,
+                "max_steps": 5,
+            })
+            assert r.status_code == 201, r.text
+
+            from yedi_benchmark.api.run_executor import get_run_executor
+            assert get_run_executor().wait_for_completion(timeout=5.0)
+
+    def test_smoke_test_skipped_for_random_agent(self, client):
+        """Random baselines must skip the smoke test entirely — even if
+        litellm would blow up when called. This test kills litellm.completion
+        to prove the code path never reaches it for random agents."""
+        agent_id = self._random_agent_id(client)
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("smoke test must not call litellm for random agents")
+
+        with patch("litellm.completion", side_effect=_boom), \
+             patch(
+                 "yedi_benchmark.api.run_executor.run_benchmark_with_registry",
+                 _stub_runner(stop_event=None),
+             ):
+            r = client.post("/api/runs", json={
+                "agent_id": agent_id,
+                "mode": "metadata-a",
+                "configs": ["easy_math_add"],
+                "episodes_per_config": 1,
+                "max_steps": 5,
+            })
+            assert r.status_code == 201, r.text
+
+            from yedi_benchmark.api.run_executor import get_run_executor
+            assert get_run_executor().wait_for_completion(timeout=5.0)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -546,6 +676,24 @@ class TestBridgeAPI:
         body = client.get("/api/bridge/status").json()
         assert body["agent_connected"] is False
         assert body["agent_connected_at"] is None
+
+    def test_status_defaults_tab_visible(self, client):
+        """Fresh fixture starts with tab_hidden=false (visible). The
+        dashboard relies on this to keep the bridge pill green by default."""
+        body = client.get("/api/bridge/status").json()
+        assert body["tab_hidden"] is False
+
+    def test_status_reflects_tab_hidden_flag(self, client):
+        """When the gym_server flips tab_hidden via the visibility message
+        from the browser, the API endpoint must surface it so the dashboard
+        can render the warning state."""
+        bridge_status_mod.get_bridge_status().set_tab_hidden(True)
+        body = client.get("/api/bridge/status").json()
+        assert body["tab_hidden"] is True
+
+        bridge_status_mod.get_bridge_status().set_tab_hidden(False)
+        body = client.get("/api/bridge/status").json()
+        assert body["tab_hidden"] is False
 
 
 # ──────────────────────────────────────────────────────────────────────────────

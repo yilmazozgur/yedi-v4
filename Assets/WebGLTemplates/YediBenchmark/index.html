@@ -72,6 +72,35 @@
                 } else {
                     statusDiv.textContent = "Human play mode. Add ?agent=true to enable AI.";
                 }
+
+                // Page Visibility reporting. When the tab is hidden or
+                // occluded, browsers throttle requestAnimationFrame to
+                // ~1Hz and the Unity WebGL main loop slows to a crawl —
+                // every agent command then takes >30s and trips the gym
+                // server's per-command timeout. We can't prevent the
+                // throttling, but we CAN tell the server it's happening
+                // so the dashboard surfaces a warning before runs start
+                // failing. Sent directly via the WebSocket (NOT through
+                // unityInstance.SendMessage) so the message still goes
+                // out even when the Unity main loop is paused.
+                if (agentMode) {
+                    var sendVisibility = function() {
+                        var ws = window._agentWS;
+                        if (!ws || ws.readyState !== 1) return;
+                        try {
+                            ws.send(JSON.stringify({
+                                type: "visibility",
+                                hidden: document.hidden === true,
+                            }));
+                        } catch (e) {
+                            console.warn("[Yedi] visibility send failed:", e);
+                        }
+                    };
+                    document.addEventListener("visibilitychange", sendVisibility);
+                    // Also report on initial load so the dashboard reflects
+                    // the current state without waiting for a transition.
+                    setTimeout(sendVisibility, 2500);
+                }
             }).catch(function(message) {
                 statusDiv.textContent = "Error: " + message;
                 console.error(message);

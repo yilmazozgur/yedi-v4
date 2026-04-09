@@ -49,6 +49,10 @@
                     <input id="f-max-tokens" name="max_tokens" type="number" value="512" min="1">
                 </div>
                 <div class="form-row">
+                    <label for="f-num-ctx">num_ctx (Ollama only, blank = default 16384)</label>
+                    <input id="f-num-ctx" name="num_ctx" type="number" min="512" placeholder="16384">
+                </div>
+                <div class="form-row">
                     <label><input id="f-vision" name="supports_vision" type="checkbox"> Supports vision</label>
                 </div>
             </div>
@@ -66,7 +70,12 @@
 (function () {
     const { api, el, clear, escapeHtml, toast, toastError, openModal, closeModal } = window.YediApp;
 
-    let providerInfo = { providers: [], default_models: {}, default_api_key_envs: {} };
+    let providerInfo = {
+        providers: [],
+        default_models: {},
+        default_api_key_envs: {},
+        default_base_urls: {},
+    };
 
     async function loadProviders() {
         providerInfo = await api.get("/api/agents/providers");
@@ -92,6 +101,13 @@
         const envInput = document.getElementById("f-api-key-env");
         if (!envInput.value) {
             envInput.value = providerInfo.default_api_key_envs[provider] || "";
+        }
+        // Prefill base_url for local/self-hosted providers (ollama) so the
+        // user doesn't have to remember the default port. Cloud providers
+        // leave this empty and rely on LiteLLM's built-in routing.
+        const urlInput = document.getElementById("f-base-url");
+        if (!urlInput.value) {
+            urlInput.value = providerInfo.default_base_urls[provider] || "";
         }
     }
 
@@ -157,6 +173,7 @@
         document.getElementById("f-api-key-env").value = a ? (a.api_key_env || "") : "";
         document.getElementById("f-base-url").value    = a ? (a.base_url || "") : "";
         document.getElementById("f-max-tokens").value  = a ? a.max_tokens : 512;
+        document.getElementById("f-num-ctx").value     = a && a.num_ctx ? a.num_ctx : "";
         document.getElementById("f-vision").checked    = a ? !!a.supports_vision : false;
         onProviderChange();
         openModal("agent-modal");
@@ -168,6 +185,7 @@
     document.getElementById("agent-form").addEventListener("submit", async (ev) => {
         ev.preventDefault();
         const id = document.getElementById("f-agent-id").value;
+        const rawNumCtx = document.getElementById("f-num-ctx").value.trim();
         const body = {
             name:            document.getElementById("f-name").value.trim(),
             provider:        document.getElementById("f-provider").value,
@@ -175,6 +193,7 @@
             api_key_env:     document.getElementById("f-api-key-env").value.trim() || null,
             base_url:        document.getElementById("f-base-url").value.trim() || null,
             max_tokens:      parseInt(document.getElementById("f-max-tokens").value, 10) || 512,
+            num_ctx:         rawNumCtx ? (parseInt(rawNumCtx, 10) || null) : null,
             supports_vision: document.getElementById("f-vision").checked,
         };
         try {

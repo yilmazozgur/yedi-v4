@@ -28,6 +28,7 @@ class AgentCreate(BaseModel):
     base_url: Optional[str] = None
     max_tokens: int = 512
     supports_vision: bool = False
+    num_ctx: Optional[int] = None
 
 
 class AgentUpdate(BaseModel):
@@ -38,6 +39,7 @@ class AgentUpdate(BaseModel):
     base_url: Optional[str] = None
     max_tokens: Optional[int] = None
     supports_vision: Optional[bool] = None
+    num_ctx: Optional[int] = None
 
 
 class AgentTestResult(BaseModel):
@@ -50,6 +52,10 @@ class ProviderInfo(BaseModel):
     providers: list[str]
     default_models: dict[str, list[str]]
     default_api_key_envs: dict[str, str]
+    # Default base_url per provider — only non-empty for local/self-hosted
+    # providers like ollama. The UI uses this to prefill the base_url input
+    # when the provider dropdown changes.
+    default_base_urls: dict[str, str] = {}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -117,3 +123,8 @@ class BridgeStatusResponse(BaseModel):
     agent_connected: bool
     game_connected_at: Optional[float] = None
     agent_connected_at: Optional[float] = None
+    # Page Visibility flag — true when the browser tab running the game
+    # has reported itself as hidden/occluded. The dashboard sidebar shows
+    # a warning when this is true, because a hidden tab gets throttled and
+    # is the leading cause of "bridge timeout" failures.
+    tab_hidden: bool = False

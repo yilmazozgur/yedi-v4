@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 
 from ..providers.registry import (
     DEFAULT_API_KEY_ENVS,
+    DEFAULT_BASE_URLS,
     DEFAULT_MODELS,
     SUPPORTED_PROVIDERS,
     create_provider,
@@ -32,6 +33,7 @@ def list_providers() -> ProviderInfo:
         providers=SUPPORTED_PROVIDERS,
         default_models=DEFAULT_MODELS,
         default_api_key_envs=DEFAULT_API_KEY_ENVS,
+        default_base_urls=DEFAULT_BASE_URLS,
     )
 
 
@@ -119,6 +121,7 @@ def test_agent(
             base_url=agent.base_url,
             max_tokens=agent.max_tokens,
             supports_vision=agent.supports_vision,
+            num_ctx=getattr(agent, "num_ctx", None),
         )
     except ProviderError as e:
         return AgentTestResult(success=False, message=str(e))

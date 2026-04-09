@@ -195,6 +195,153 @@ class YediEnv(gym.Env):
         return response
 
     # ------------------------------------------------------------------
+    # Reset readiness probe
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_fresh_state(state: dict) -> bool:
+        """True iff ``state`` looks like a freshly-reset game.
+
+        Background: scene reloads exhibit a TOC/TOU race. The new
+        HeptagonController scene initializes its action_count counter to 0
+        the moment Unity begins booting the new gameplay scene, but the
+        slot game objects spawn later and the ManaDisplay singleton may
+        still be holding the previous episode's mana value during that
+        window. A weaker check (mana>0, action_count==0, valid_actions
+        present) accepted those mash-up frames in run_1ffefc335187 and
+        produced 11/24 zero-score "ghost episodes" — slots populated with
+        leftover cards from the prior episode, mana frozen at the prior
+        leaving value, but step counter rolled back to 0.
+
+        The four checks below, taken together, are unambiguous: every one
+        of them is satisfied by a real fresh game and every one rejects
+        the observed mash-up frame.
+
+          - ``mana > 0``: must be present (post-game-over flame leaks 0)
+          - non-empty ``valid_actions``: any active game has at least DRAW
+          - ``action_count == 0``: explicit step=0 (not still showing the
+            final step of the previous episode). ``action_count`` is the
+            ``Step:`` field on describe_state's user-text dump.
+          - **all slots empty**: a fresh game cannot have occupied build
+            slots; the bug case had slots 1 + 3 still holding prior cards.
+          - **mana_max consistent with mana**: a fresh game initializes
+            mana_max either to 0 or to the starting mana (always equal to
+            the current mana). The mash-up frame had mana_max=193 while
+            mana=81 — clearly stale.
+        """
+        if not isinstance(state, dict):
+            return False
+        if float(state.get("mana", 0) or 0) <= 0:
+            return False
+        if not state.get("valid_actions"):
+            return False
+        # Note: don't use ``or -1`` here — that would short-circuit to -1
+        # when action_count is the literal 0 we're trying to match. Use
+        # an explicit ``is None`` / sentinel instead.
+        ac = state.get("action_count")
+        if ac is None:
+            return False
+        try:
+            if int(ac) != 0:
+                return False
+        except (TypeError, ValueError):
+            return False
+
+        # All slots must be empty. The slot serializer always emits 7
+        # entries (new + 1..5 + sell); a missing list is itself a sign
+        # the bridge is mid-load and should be polled again.
+        slots = state.get("slots")
+        if not isinstance(slots, list) or len(slots) == 0:
+            return False
+        for slot in slots:
+            if isinstance(slot, dict) and slot.get("occupied", False):
+                return False
+
+        # mana_max must be either 0 (uninitialized) or equal to the
+        # current mana (a fresh game initializes mana_max to the starting
+        # mana, which IS the current mana before any actions). Anything
+        # else is a stale value bleeding through from the prior episode.
+        try:
+            mana = float(state.get("mana", 0) or 0)
+            mmax = float(state.get("mana_max", 0) or 0)
+        except (TypeError, ValueError):
+            return False
+        if mmax != 0 and abs(mmax - mana) > 0.5:
+            return False
+
+        return True
+
+    @staticmethod
+    def _is_broken_loading_state(state: dict) -> bool:
+        """True iff ``state`` looks like the bridge's "scene loading" sentinel.
+
+        After scene reload, the bridge sometimes returns frames where Unity
+        has wiped the previous game's singletons but not yet booted the
+        new ones. The frame's signature is unmistakable:
+            mana=0, mana_max=0, action_count=None, no valid_actions, no
+            occupied slots.
+        In describe_state's user-text dump this renders as a single line
+        ``Mana: 0 | Best: 0 | Step: ?/?`` with nothing else — the model
+        has no information to act on.
+
+        In run_1ffefc335187 every zero-score episode followed this exact
+        pattern after step 0: 200 consecutive blank frames burned through
+        with a=37 fallbacks because the env had no way to tell the bridge
+        was lost. Detecting it lets step() raise BridgeDisconnectedError
+        so the runner's recovery path (recreate env, retry) kicks in
+        instead of grinding through wasted LLM calls.
+
+        Note: this is intentionally narrow. We only return True when ALL
+        of the following hold, so we don't accidentally trip during a
+        normal mid-game state where mana legitimately bottoms out at 0
+        but the slots/valid_actions/action_count are still present.
+        """
+        if not isinstance(state, dict):
+            return True  # No state at all is definitely broken.
+        # action_count present but None is the sentinel — anything else
+        # (an int, even 0) means the bridge is reporting a real frame.
+        if state.get("action_count") is not None:
+            return False
+        if float(state.get("mana", 0) or 0) > 0:
+            return False
+        if state.get("valid_actions"):
+            return False
+        slots = state.get("slots") or []
+        for slot in slots:
+            if isinstance(slot, dict) and slot.get("occupied", False):
+                return False
+        return True
+
+    def _wait_for_fresh_state(self, timeout: float = 15.0) -> dict:
+        """Poll get_state until the response looks like a fresh game.
+
+        Replaces the old ``time.sleep(3.0)`` race. Polls every 200ms for up
+        to ``timeout`` seconds. Raises BridgeDisconnectedError on timeout
+        rather than handing back a corrupt state — a noisy failure here is
+        much better than the silent zero-score episodes we used to log.
+        """
+        deadline = time.monotonic() + timeout
+        last_state: dict = {}
+        while time.monotonic() < deadline:
+            response = self._send_command({"type": "get_state"})
+            if self._is_fresh_state(response):
+                return response
+            last_state = response
+            time.sleep(0.2)
+
+        # Build a useful diagnostic from the last response we saw, so the
+        # benchmark log shows WHY we gave up rather than just "timeout".
+        diag = {
+            "mana": last_state.get("mana"),
+            "action_count": last_state.get("action_count"),
+            "valid_actions_count": len(last_state.get("valid_actions") or []),
+        }
+        raise BridgeDisconnectedError(
+            f"scene reload never produced a fresh state within {timeout}s "
+            f"(last seen: {diag})"
+        )
+
+    # ------------------------------------------------------------------
     # Gymnasium interface
     # ------------------------------------------------------------------
 
@@ -241,9 +388,20 @@ class YediEnv(gym.Env):
 
         self._send_command(start_cmd)
 
-        # Wait for scene to load, then get initial state
-        time.sleep(3.0)  # Scene reload takes ~2-3s
-        response = self._send_command({"type": "get_state"})
+        # Poll get_state until the scene reload finishes and Unity is serving
+        # a fresh game. The previous implementation was a fixed time.sleep(3.0)
+        # which silently lost ~50% of episodes on EASY: when scene reload took
+        # longer than 3s, get_state returned the stale post-game-over state
+        # (mana=0, no slots, no valid actions), and the LLM then ran the full
+        # max_steps cap on a corpse of a game while scoring 0.
+        #
+        # The "ready" signal is the conjunction of:
+        #   - mana > 0       (post-game-over leaks mana=0)
+        #   - non-empty valid_actions (a freshly reset game always has at
+        #     least DRAW available)
+        #   - action_count == 0 (we're at step 0, not still seeing the
+        #     final-step state of the previous episode)
+        response = self._wait_for_fresh_state(timeout=15.0)
         self._state = response
         self._prev_mana = self._state.get("mana", 200)
         self._step_count = 0
@@ -264,9 +422,25 @@ class YediEnv(gym.Env):
             state_resp = self._send_command({"type": "get_state"})
             self._state = state_resp
 
+        # Detect the bridge's "scene loading" sentinel before treating
+        # this as a real step. Without this check the env would keep
+        # round-tripping blank frames through the LLM until max_steps —
+        # see _is_broken_loading_state for the failure-mode rationale
+        # and the run_1ffefc335187 ghost-episode evidence.
+        if self._is_broken_loading_state(self._state):
+            raise BridgeDisconnectedError(
+                "bridge returned a 'scene loading' sentinel mid-episode "
+                "(mana=0, action_count=None, no slots, no valid_actions). "
+                "The previous episode's scene teardown is still racing the "
+                "next start_game — recreating the env."
+            )
+
         self._step_count += 1
 
-        # Compute reward
+        # Compute reward. The unproductive slot-to-slot move penalty is
+        # applied by the Unity bridge as an in-game mana deduction, so it
+        # flows through the mana-delta term here automatically — no extra
+        # shaping needed on the Python side.
         reward = self._compute_reward()
         self._prev_mana = self._state.get("mana", 0)
 

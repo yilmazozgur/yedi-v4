@@ -231,3 +231,93 @@ class TestRunTraceStoreSingleton:
         b = get_run_trace_store()
         assert a is not b
         assert b.get("run_x") is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Runner integration: which agents create a trace?
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# The dashboard's pollTrace() distinguishes "no trace exists at all"
+# (available=false → "no LLM trace for this run") from "trace exists but
+# no entries yet" (available=true → "Waiting for the model's first move…").
+# If the runner creates an empty trace for non-LLM agents, the UI gets
+# stuck on the "Waiting…" placeholder forever for random/greedy runs.
+# These tests pin the contract that the runner only creates the trace
+# for actual LLM agents.
+
+
+import numpy as np
+
+from yedi_benchmark import benchmark_runner
+from yedi_benchmark.benchmark_runner import run_benchmark_with_registry
+from yedi_benchmark.registries import AgentRegistry
+
+
+class _StubEnv:
+    """Minimal Gymnasium-compatible env stub: one step, then terminate."""
+
+    def __init__(self, server_url=None, game_config=None, max_steps=None):
+        self.game_config = game_config or {}
+
+    def reset(self, seed=None, options=None):
+        return self._obs(), self._info()
+
+    def step(self, action):
+        return self._obs(), 0.0, True, False, self._info()
+
+    def close(self):
+        pass
+
+    @staticmethod
+    def _obs():
+        return {"action_mask": np.ones(38, dtype=np.int8)}
+
+    @staticmethod
+    def _info():
+        return {"raw_state": {"mana": 100, "mana_max": 100}, "max_mana": 100}
+
+
+class TestRunnerTraceCreation:
+    def test_random_agent_does_not_create_trace(
+        self, isolated_data_dir, isolated_runs_dir, monkeypatch
+    ):
+        """The bug: a random-agent run was creating an empty trace, which
+        made the dashboard's poll loop see available=true with no entries
+        and stay stuck on "Waiting for the model's first move…" forever.
+        After the fix, no trace exists for non-LLM agents."""
+        monkeypatch.setattr(benchmark_runner, "YediEnv", _StubEnv)
+        monkeypatch.setattr(benchmark_runner, "YediVLMEnv", _StubEnv)
+        reset_run_trace_store()
+
+        random_id = AgentRegistry().get_by_name("Random").id
+        result = run_benchmark_with_registry(
+            agent_id=random_id,
+            mode="metadata-a",
+            config_names=["easy_math_add"],
+            episodes_per_config=1,
+            max_steps=2,
+        )
+
+        # Run finished but no trace entry was ever created — the dashboard
+        # endpoint will return available=false and the JS will swap the
+        # placeholder for the "no LLM trace" message.
+        assert get_run_trace_store().get(result.id) is None
+
+    def test_greedy_agent_does_not_create_trace(
+        self, isolated_data_dir, isolated_runs_dir, monkeypatch
+    ):
+        """Greedy is also a non-LLM agent — same contract as random."""
+        monkeypatch.setattr(benchmark_runner, "YediEnv", _StubEnv)
+        monkeypatch.setattr(benchmark_runner, "YediVLMEnv", _StubEnv)
+        reset_run_trace_store()
+
+        greedy_id = AgentRegistry().get_by_name("Greedy").id
+        result = run_benchmark_with_registry(
+            agent_id=greedy_id,
+            mode="metadata-a",
+            config_names=["easy_math_add"],
+            episodes_per_config=1,
+            max_steps=2,
+        )
+
+        assert get_run_trace_store().get(result.id) is None

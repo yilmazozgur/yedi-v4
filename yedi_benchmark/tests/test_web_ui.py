@@ -178,6 +178,34 @@ class TestPageContent:
         assert "plot.ly" in r.text
         assert 'id="dimension-charts"' in r.text
 
+    def test_analysis_page_has_filter_controls(self, client):
+        """Every filter control the Analysis JS wires up must exist in the
+        rendered template — catches accidental id renames or deletions that
+        would silently break the page's load-time wiring."""
+        r = client.get("/analysis")
+        expected_ids = [
+            "a-mode-filter",
+            "a-agent-filter",
+            "a-max-steps-filter",
+            "a-show-previews-filter",
+            "a-perfect-memory-filter",
+            "a-tier-buttons",
+            "a-config-picker",
+            "a-reset-filters",
+            "a-filter-summary",
+            "a-stat-runs",
+            "a-stat-episodes",
+            "a-stat-mean-mana",
+            "a-stat-best-mana",
+            "a-ablation-card",
+            "a-ablation-charts",
+            "a-distribution-card",
+            "a-distribution-chart",
+            "leaderboard-tbody",
+        ]
+        for el_id in expected_ids:
+            assert f'id="{el_id}"' in r.text, f"missing filter control: {el_id}"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Wiring: dashboard + API live on the same app

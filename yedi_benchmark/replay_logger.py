@@ -36,6 +36,7 @@ class ReplayLogger:
         self.episode_id = None
         self.episode_dir = None
         self.log_file = None
+        self.trace_file = None
         self.step_count = 0
 
     def start_episode(self, config: dict, agent_name: str = "unknown"):
@@ -46,6 +47,11 @@ class ReplayLogger:
 
         log_path = self.episode_dir / "events.jsonl"
         self.log_file = open(log_path, "w")
+
+        # trace.jsonl captures the raw LLM exchanges for this episode. It's
+        # written lazily — we only open the file when log_exchange() is called,
+        # so random/greedy episodes don't leave an empty trace file behind.
+        self.trace_file = None
         self.step_count = 0
 
         self._write({
@@ -65,8 +71,16 @@ class ReplayLogger:
         terminated: bool,
         truncated: bool,
         info: dict = None,
+        fallback_reason: str = None,
     ):
-        """Log a single step."""
+        """Log a single step.
+
+        ``fallback_reason`` is set by the runner when the agent's chosen
+        action came from LLMAgent's silent-fallback path (provider error,
+        parse failure, etc.) instead of a real model decision. Offline
+        analysis uses this to distinguish "the model picked action X" from
+        "the LLM crashed and we defaulted to the first valid action".
+        """
         # Convert numpy arrays to lists for JSON serialization
         obs_serializable = {}
         for k, v in observation.items():
@@ -87,9 +101,56 @@ class ReplayLogger:
             "truncated": truncated,
             "mana": observation.get("mana", [0])[0] if isinstance(observation.get("mana"), (list, np.ndarray)) else observation.get("mana", 0),
             "info_max_mana": info.get("max_mana") if info else None,
+            "fallback_reason": fallback_reason,
         })
 
         self.step_count += 1
+
+    def log_exchange(
+        self,
+        step_in_episode: int,
+        user_text: str,
+        response: str,
+        action: int,
+        latency_ms: float,
+        error: str = None,
+        system_prompt: str = None,
+        fallback_reason: str = None,
+    ):
+        """Persist a single LLM exchange to ``trace.jsonl``.
+
+        Mirrors the in-memory ``RunTraceStore`` entries so crashed or
+        closed sessions can still be debugged offline. Called from the
+        benchmark runner's ``_on_exchange`` closure after every LLM call
+        (both success and error paths).
+
+        The file is opened on first use so non-LLM episodes don't leave
+        empty files behind.
+        """
+        if self.episode_dir is None:
+            return
+        if self.trace_file is None:
+            trace_path = self.episode_dir / "trace.jsonl"
+            self.trace_file = open(trace_path, "w")
+            # Stamp the system prompt once at the top of the trace so
+            # every entry after it can be interpreted without ambiguity.
+            if system_prompt:
+                self._write_trace({
+                    "type": "system_prompt",
+                    "timestamp": time.time(),
+                    "system_prompt": system_prompt,
+                })
+        self._write_trace({
+            "type": "exchange",
+            "timestamp": time.time(),
+            "step_in_episode": step_in_episode,
+            "user_text": user_text,
+            "response": response,
+            "action": action,
+            "latency_ms": latency_ms,
+            "error": error,
+            "fallback_reason": fallback_reason,
+        })
 
     def log_screenshot(self, screenshot: np.ndarray):
         """Save a screenshot PNG and log a reference."""
@@ -131,8 +192,16 @@ class ReplayLogger:
         if self.log_file:
             self.log_file.close()
             self.log_file = None
+        if self.trace_file:
+            self.trace_file.close()
+            self.trace_file = None
 
     def _write(self, data: dict):
         if self.log_file:
             self.log_file.write(json.dumps(data, cls=_NumpyEncoder) + "\n")
             self.log_file.flush()
+
+    def _write_trace(self, data: dict):
+        if self.trace_file:
+            self.trace_file.write(json.dumps(data, cls=_NumpyEncoder) + "\n")
+            self.trace_file.flush()

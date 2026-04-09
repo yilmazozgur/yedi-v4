@@ -63,6 +63,46 @@ class TestBridgeStatus:
         assert snap.game_connected is True
 
 
+class TestTabHidden:
+    """Page Visibility flag — surfaced to the dashboard so the user knows
+    a hidden tab is the cause when bridge timeouts start happening."""
+
+    def test_starts_visible(self):
+        b = BridgeStatus()
+        assert b.is_tab_hidden() is False
+        assert b.snapshot().tab_hidden is False
+
+    def test_set_tab_hidden_true(self):
+        b = BridgeStatus()
+        b.set_tab_hidden(True)
+        assert b.is_tab_hidden() is True
+        assert b.snapshot().tab_hidden is True
+
+    def test_set_tab_hidden_round_trip(self):
+        b = BridgeStatus()
+        b.set_tab_hidden(True)
+        b.set_tab_hidden(False)
+        assert b.is_tab_hidden() is False
+
+    def test_disconnect_clears_hidden_flag(self):
+        """A disconnected tab can't be 'hidden' meaningfully — the next
+        connection should start clean rather than inheriting a stale flag."""
+        b = BridgeStatus()
+        b.mark_game_connected()
+        b.set_tab_hidden(True)
+        b.mark_game_disconnected()
+        assert b.is_tab_hidden() is False
+        assert b.snapshot().tab_hidden is False
+
+    def test_set_tab_hidden_coerces_truthy_values(self):
+        """The JS side may send the bool as 0/1 or as a string in odd cases."""
+        b = BridgeStatus()
+        b.set_tab_hidden(1)
+        assert b.is_tab_hidden() is True
+        b.set_tab_hidden(0)
+        assert b.is_tab_hidden() is False
+
+
 class TestSingleton:
     def test_get_bridge_status_returns_same_instance(self):
         reset_bridge_status()

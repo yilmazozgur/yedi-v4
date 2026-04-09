@@ -174,17 +174,28 @@
         const host = document.getElementById("bridge-status");
         const body = document.getElementById("bridge-status-body");
         if (!host || !body) return;
-        host.classList.remove("is-ok", "is-err");
+        host.classList.remove("is-ok", "is-err", "is-warn");
         if (!s) {
             body.textContent = "unreachable";
             host.classList.add("is-err");
             return;
         }
         if (s.game_connected) {
-            host.classList.add("is-ok");
-            body.innerHTML =
-                `<div>game: connected</div>` +
-                `<div>agent: ${s.agent_connected ? "connected" : "—"}</div>`;
+            // Hidden tab is still "connected" (the WebSocket is fine, the
+            // WebGL main loop just gets throttled). We surface a warning
+            // pill so the user can see the cause before bridge timeouts
+            // start blowing up runs.
+            if (s.tab_hidden) {
+                host.classList.add("is-warn");
+                body.innerHTML =
+                    `<div>game: <strong>tab hidden</strong></div>` +
+                    `<div class="dim">bring the game window forward</div>`;
+            } else {
+                host.classList.add("is-ok");
+                body.innerHTML =
+                    `<div>game: connected</div>` +
+                    `<div>agent: ${s.agent_connected ? "connected" : "—"}</div>`;
+            }
         } else {
             host.classList.add("is-err");
             body.innerHTML =

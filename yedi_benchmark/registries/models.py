@@ -99,6 +99,12 @@ class AgentConfig(BaseModel):
     base_url: Optional[str] = None  # for openai-compatible custom endpoints
     max_tokens: int = 512
     supports_vision: bool = False
+    # Ollama-specific: override the backend's default context window. The
+    # Ollama default is 4096 tokens, which truncates our 18 KB system prompt
+    # silently and causes "model runner stopped" crashes on vision requests.
+    # Setting this to e.g. 16384 allocates a larger KV cache at load time.
+    # Ignored for non-Ollama providers.
+    num_ctx: Optional[int] = None
     created_at: str = Field(default_factory=_utcnow_iso)
     updated_at: str = Field(default_factory=_utcnow_iso)
 
@@ -222,6 +228,11 @@ class RunRecord(BaseModel):
 
     # Optional error message if status == FAILED
     error: Optional[str] = None
+
+    # Per-episode errors recorded by the runner when an individual episode
+    # crashed (e.g. bridge timeout) but the run as a whole continued. Each
+    # entry: {config, episode_idx, error, ts}. Empty for clean runs.
+    episode_errors: list[dict] = Field(default_factory=list)
 
     def episodes_done(self) -> int:
         return sum(len(r.episodes) for r in self.results.values())

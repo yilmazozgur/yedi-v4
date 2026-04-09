@@ -26,6 +26,11 @@ class BridgeSnapshot:
     agent_connected: bool
     game_connected_at: float | None  # unix epoch seconds
     agent_connected_at: float | None
+    # True when the browser tab running the game is hidden/occluded —
+    # reported by the page via the Page Visibility API. The dashboard
+    # surfaces this as a warning because a hidden tab gets aggressively
+    # throttled and is the most common cause of "bridge timeout" errors.
+    tab_hidden: bool = False
 
 
 class BridgeStatus:
@@ -43,6 +48,9 @@ class BridgeStatus:
         self._agent_connected = False
         self._game_connected_at: float | None = None
         self._agent_connected_at: float | None = None
+        # Page Visibility flag — only meaningful while the game is connected.
+        # Cleared on disconnect so a stale "hidden" doesn't outlive the tab.
+        self._tab_hidden = False
 
     # ── mutators (called from gym_server WebSocket handlers) ──
 
@@ -55,6 +63,19 @@ class BridgeStatus:
         with self._lock:
             self._game_connected = False
             self._game_connected_at = None
+            # A disconnected tab can't be "hidden" in any meaningful sense
+            # — clearing this avoids a stuck warning the next time the user
+            # reconnects.
+            self._tab_hidden = False
+
+    def set_tab_hidden(self, hidden: bool) -> None:
+        """Update the Page Visibility state reported by the browser tab."""
+        with self._lock:
+            self._tab_hidden = bool(hidden)
+
+    def is_tab_hidden(self) -> bool:
+        with self._lock:
+            return self._tab_hidden
 
     def mark_agent_connected(self) -> None:
         with self._lock:
@@ -83,6 +104,7 @@ class BridgeStatus:
                 agent_connected=self._agent_connected,
                 game_connected_at=self._game_connected_at,
                 agent_connected_at=self._agent_connected_at,
+                tab_hidden=self._tab_hidden,
             )
 
 

@@ -13,10 +13,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from ..bridge_status import BridgeStatus
-from ..registries import RunRecord, RunRegistry, RunStatus
+from ..providers.registry import smoke_test_agent
+from ..registries import AgentRegistry, RunRecord, RunRegistry, RunStatus
+from ..registries.agents import AgentRegistryError
 from ..registries.runs import RunRegistryError
 from ..run_trace import get_run_trace_store
-from .deps import get_bridge_status, get_run_registry
+from .deps import get_agent_registry, get_bridge_status, get_run_registry
 from .run_executor import ExecutorBusyError, RunExecutor, get_run_executor
 from .schemas import RunActiveStatus, RunCreate
 
@@ -72,6 +74,7 @@ def get_run(
 def create_run(
     body: RunCreate,
     reg: RunRegistry = Depends(get_run_registry),
+    agents: AgentRegistry = Depends(get_agent_registry),
     executor: RunExecutor = Depends(get_run_executor),
     bridge: BridgeStatus = Depends(get_bridge_status),
 ) -> RunRecord:
@@ -81,6 +84,10 @@ def create_run(
     Returns 400 if no browser tab is currently connected to ``/ws/game`` —
     otherwise the agent would talk to a dead bridge and every episode would
     silently complete with garbage observations.
+    Returns 400 if the agent's pre-run smoke test fails (bad key, local
+    server down, model not pulled, etc). This fails fast at POST time
+    instead of letting the worker thread spawn and crash on the first LLM
+    call.
     """
     if not bridge.is_game_connected():
         raise HTTPException(
@@ -88,6 +95,38 @@ def create_run(
             "No browser game is connected to /ws/game. Open the Game tab "
             "(in agent mode) and wait for it to load before launching a run.",
         )
+
+    # Vision modes cannot be combined with merge_previews. The previews block
+    # is pre-computed from real card values, so it trivialises the visual
+    # perception test AND leaks every memory-hidden card's value via its
+    # per-dimension gain tiers. The UI disables the checkbox on vision modes,
+    # this rejects the same combination for API/CLI callers.
+    if body.mode.value.startswith("vision") and body.show_merge_previews:
+        raise HTTPException(
+            400,
+            "show_merge_previews is not compatible with vision modes. "
+            "The merge_previews block contains pre-computed per-dimension "
+            "gains that bypass visual perception and leak memory-hidden "
+            "card values. Disable it to run a vision benchmark.",
+        )
+
+    # Pre-run smoke test: look up the agent here (rather than letting the
+    # worker thread do it) so we can probe its provider and reject the POST
+    # with a readable error BEFORE any run record is created. Random and
+    # greedy baselines short-circuit to success inside smoke_test_agent.
+    try:
+        agent_cfg = agents.get(body.agent_id)
+    except AgentRegistryError as e:
+        raise HTTPException(400, str(e))
+
+    ok, msg = smoke_test_agent(agent_cfg)
+    if not ok:
+        raise HTTPException(
+            400,
+            f"Agent smoke test failed for {agent_cfg.name!r}: {msg}. "
+            f"Check that the provider is reachable and the model is available.",
+        )
+
     try:
         record = executor.start(
             run_registry=reg,

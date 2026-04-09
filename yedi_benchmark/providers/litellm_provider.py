@@ -65,6 +65,7 @@ class LiteLLMProvider(LLMProvider):
         messages: list[dict],
         system: Optional[str] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
+        timeout: Optional[float] = None,
     ) -> str:
         # LiteLLM expects messages in OpenAI format. The system prompt is
         # prepended as a {"role": "system"} message.
@@ -83,6 +84,19 @@ class LiteLLMProvider(LLMProvider):
             kwargs["api_key"] = self.api_key
         if self.base_url:
             kwargs["base_url"] = self.base_url
+        if timeout is not None:
+            # LiteLLM forwards `timeout` to the underlying HTTP client. Without
+            # it, a dead local server (e.g. Ollama crashed mid-run) hangs for
+            # ~10 minutes — not acceptable for a pre-run smoke test.
+            kwargs["timeout"] = timeout
+        if self.num_ctx is not None and self.model.startswith(
+            ("ollama_chat/", "ollama/")
+        ):
+            # For Ollama backends only, bump the KV-cache/context window. The
+            # Ollama default of 4096 silently truncates our 18 KB system
+            # prompt and crashes the model runner on vision requests. LiteLLM
+            # passes this through to Ollama's /api/chat options block.
+            kwargs["num_ctx"] = self.num_ctx
 
         # Imported lazily so unit tests that mock at the call site work.
         from litellm import completion

@@ -221,6 +221,33 @@ class RunRegistry:
             self._write(record)
             return record
 
+    def record_episode_error(
+        self,
+        run_id: str,
+        config_name: str,
+        episode_idx: int,
+        error: str,
+    ) -> RunRecord:
+        """Record a per-episode failure without aborting the run.
+
+        Used by the runner when an individual episode crashes (e.g. the
+        WebSocket bridge to the browser dies mid-step) but we want to keep
+        going with the next episode/config instead of marking the whole run
+        FAILED. The episode is NOT appended to ConfigResult.episodes — only
+        successful episodes count toward the per-config aggregates — but the
+        error is logged on the run record so the dashboard can surface it.
+        """
+        with self._lock:
+            record = self.get(run_id)
+            record.episode_errors.append({
+                "config": config_name,
+                "episode_idx": episode_idx,
+                "error": error,
+                "ts": _now_iso(),
+            })
+            self._write(record)
+            return record
+
     def append_episode(
         self,
         run_id: str,

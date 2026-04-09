@@ -46,9 +46,10 @@ MEDIUM = {
     "med_math_spatial":     {"number": "add", "shape": "triangle"},
     "med_visual_verbal":    {"color": "add", "word": "verbs"},
     "med_spatial_verbal":   {"shape": "triangle", "word": "verbs"},
-    # First memory combos (show_all = gentler memory mode)
-    "med_math_memory":      {"number": "add", "memory": "show all"},
-    "med_visual_memory":    {"color": "add", "memory": "show all"},
+    # First memory combos — "every action" is the gentler memory mode
+    # (every interaction briefly re-reveals the whole board).
+    "med_math_memory":      {"number": "add", "memory": "every action"},
+    "med_visual_memory":    {"color": "add", "memory": "every action"},
 }
 
 # ── HARD ─────────────────────────────────────────────────────────────

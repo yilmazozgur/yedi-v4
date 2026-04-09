@@ -306,7 +306,23 @@ a placement plan wastes both mana and a move. Think before each action.
   6. Ignoring multi-dim trade-offs: a merge can be perfect in one dim and
      terrible in another. Multipliers compound — one bad dim ruins the merge.
   7. Wasting moves: WAIT, redundant moves between empty slots, or moving a
-     card just to move it all burn the move budget. Only act with intent.\
+     card just to move it all burn the move budget. Only act with intent.
+  8. OSCILLATING BETWEEN BUILD SLOTS: moving a card from one build slot
+     (1..5) to another WITHOUT triggering a merge is strictly worse than
+     doing nothing. Every such unproductive slot→slot move:
+       - costs a move from your fixed move budget,
+       - wastes the drain tick on the total-mana bank, AND
+       - DEDUCTS A FLAT 5 MANA PENALTY from your total mana bank directly.
+         Yes — your bank drops by 5 the moment you issue a board-to-board
+         move that does not reduce the occupied-slot count. This is real
+         score you are losing, it is visible in the next state's mana
+         value, and it permanently lowers the ceiling for your max_mana.
+     A "move slot→slot" action (action IDs 6..30) only makes sense if the
+     destination is OCCUPIED and the pair produces a merge that is ≥1.5x
+     in every active dimension. If the destination is empty, or the
+     resulting merge would be neutral/bad, do NOT issue the move — you
+     will pay 5 mana for nothing. Prefer: place NEW into an empty slot,
+     sell a capped slot, or draw.\
 """
 
 # Per-dimension merge rules, keyed by (dimension_field, mode_value).
@@ -842,6 +858,123 @@ _COLOR_NAMES = {
     (1, 1, 1): "White", (0, 0, 0): "Black",
 }
 
+# Merge gain tier → (label, multiplier) mapping used by describe_state when
+# rendering the merge_previews block. Bridge-side ComputeMerge*Gain returns
+# integer tiers in the set {-1, 0, 1, 2, 3}; the multipliers come from
+# ManaDisplay.cs at difficulty=0 (the only difficulty the benchmark runs):
+# manaReductionMultiplier=0.9, manaIncreaseMultiplier1=1.5,
+# manaIncreaseMultiplier2=2.0, manaIncreaseMultiplier3=2.5.
+#
+# Format note: emitting tier WORDS plus the multiplier (instead of the bare
+# integer the old format used) avoids the "Num=+2 reads as a resulting card
+# value" confusion. The slot dump uses "Num=-2.0" for actual numeric card
+# values, and small models repeatedly mistook the preview's "Num=+2" tier
+# code for a card value.
+_MERGE_TIER = {
+    -1: ("BAD",       "0.9"),
+     0: ("neutral",   "1.0"),
+     1: ("GOOD",      "1.5"),
+     2: ("GREAT",     "2.0"),
+     3: ("PERFECT",   "2.5"),
+}
+
+# Short, unambiguous dimension labels for the preview rows. The slot dump
+# uses Num/Color/Shape/Word; we mirror those exactly so the model can map
+# "Number GREAT" in a preview to the "Num=..." it sees in the slot lines.
+_DIM_NAME = {
+    "number": "Number",
+    "color":  "Color",
+    "shape":  "Shape",
+    "word":   "Word",
+}
+
+# Hardcoded merge cap matches the game's per-card limit (maxNumberOfMerges
+# in CardFrame.cs / NumberCard.cs). The slot serializer doesn't expose this
+# value, and the greedy_agent.py heuristic hardcodes the same constant — see
+# greedy_agent.py:142. If the game ever changes this value, both call sites
+# need to update together.
+_MERGE_CAP = 3
+
+
+def _build_sell_hint(slots: list, mana: float, mana_max: float) -> str:
+    """Single-line sell-candidate hint for the prompt.
+
+    Walks the build slots, picks the highest-mana occupied one, and reports
+    what selling it RIGHT NOW would do to the bank — specifically, whether
+    the resulting `mana + card_mana` would exceed the current `Best`.
+
+    Why this exists: small models repeatedly fail this comparison. Trace
+    analysis on Qwen3-VL 4B's EASY runs showed it routinely sells mana=9
+    cards "because selling looks safe", which cannot raise the score, then
+    never lets a slot accumulate enough merges to compound. Lifting the
+    arithmetic out of the model and into the state dump removes the
+    cognitive cost of that comparison.
+
+    Returns "" when no build slot is occupied (nothing to hint about).
+    """
+    # slots indexes from SerializeGameState: 0 = new, 1..5 = build, 6 = sell.
+    # Only build slots are meaningful sell candidates — selling new is just
+    # rebating the draw cost, and the sell slot itself isn't an action target.
+    candidates = []
+    for idx in range(1, 6):
+        if idx >= len(slots):
+            break
+        slot = slots[idx]
+        if not slot.get("occupied", False):
+            continue
+        try:
+            card_mana = float(slot.get("card_mana", 0) or 0)
+        except (TypeError, ValueError):
+            card_mana = 0.0
+        try:
+            merges = int(slot.get("merges_done", 0) or 0)
+        except (TypeError, ValueError):
+            merges = 0
+        candidates.append((idx, card_mana, merges))
+
+    if not candidates:
+        return ""
+
+    # Pick highest card_mana; tie-break on merges_done (closer to MAXED
+    # implies the card is "done" and the right thing to liquidate). Ties
+    # after that fall back to lowest slot index for determinism, which the
+    # reverse-sort below preserves naturally because Python's sort is stable.
+    candidates.sort(key=lambda t: (t[1], t[2]), reverse=True)
+    idx, card_mana, merges = candidates[0]
+
+    maxed = merges >= _MERGE_CAP
+    merge_str = f"{merges}/{_MERGE_CAP} merges"
+    if maxed:
+        merge_str += ", MAXED — cannot grow further"
+
+    sell_action = 31 + idx  # action ID for "Sell slot {idx}" — see _describe_action
+    bank_after = float(mana or 0) + card_mana
+
+    try:
+        best = float(mana_max or 0)
+    except (TypeError, ValueError):
+        best = 0.0
+
+    head = (
+        f"Sell hint: best candidate is slot {idx} "
+        f"(+{card_mana:.0f} mana, {merge_str}, action {sell_action})."
+    )
+
+    if best <= 0:
+        return f"{head} Bank would become {bank_after:.0f}."
+
+    if bank_after > best:
+        return (
+            f"{head} Selling now would raise Best from "
+            f"{best:.0f} → {bank_after:.0f}."
+        )
+
+    deficit = best - bank_after
+    return (
+        f"{head} Best is {best:.0f}; selling now only reaches "
+        f"{bank_after:.0f} (short by {deficit:.0f}) — keep merging unless MAXED."
+    )
+
 
 def _color_name(r: float, g: float, b: float) -> str:
     key = (round(r), round(g), round(b))
@@ -853,6 +986,7 @@ def build_system_prompt(
     prompt: "Optional[Prompt]" = None,
     *,
     include_history_legend: bool = False,
+    vision_legend: bool = False,
 ) -> str:
     """Build a game-specific system prompt from active modes.
 
@@ -866,7 +1000,9 @@ def build_system_prompt(
     tuples (field, mode). Both shapes are handled here.
 
     `include_history_legend` injects the compact-history format legend used by
-    Mode C agents (metadata-c / vision-c).
+    Mode C agents (metadata-c / vision-c). `vision_legend` switches to the
+    vision-mode variant of that legend (attribute-stripped cells, screenshot
+    as source of perceptual truth).
     """
     if prompt is not None:
         core = prompt.core_rules
@@ -896,7 +1032,7 @@ def build_system_prompt(
         parts.append("No specific dimension rules available — use general merge strategy.")
 
     if include_history_legend:
-        parts.append(_COMPACT_HISTORY_LEGEND)
+        parts.append(_COMPACT_HISTORY_LEGEND_VISION if vision_legend else _COMPACT_HISTORY_LEGEND)
 
     parts.append("")
     parts.append("RESPONSE FORMAT")
@@ -920,7 +1056,11 @@ def build_system_prompt(
     return "\n\n".join(parts)
 
 
-def describe_state(raw_state: dict, show_merge_previews: bool = False) -> str:
+def describe_state(
+    raw_state: dict,
+    show_merge_previews: bool = False,
+    hide_perceptual_attrs: bool = False,
+) -> str:
     """Convert raw game state dict to a concise text description for the LLM.
 
     Args:
@@ -930,6 +1070,14 @@ def describe_state(raw_state: dict, show_merge_previews: bool = False) -> str:
             candidate this turn). Default False — the canonical benchmark
             withholds these so the model has to estimate gains itself; flip
             this on for an "assisted-mode" run.
+        hide_perceptual_attrs: when True, strip per-slot card attributes
+            (Num, Color, Gray, Shape, Word) from the output and emit only
+            occupancy + mana + merges. Used by vision agents so the screen-
+            shot is the only source of perceptual information — otherwise
+            the text dump would hand the model a free answer key for the
+            visual perception test. HUD-style fields (header mana, active
+            modes, valid-actions list, HIDDEN flag) are kept regardless,
+            since the model could read them from pixels anyway.
     """
     if not raw_state:
         return "Game not started."
@@ -969,6 +1117,15 @@ def describe_state(raw_state: dict, show_merge_previews: bool = False) -> str:
             lines.append(f"  [{label}] HIDDEN | Mana={card_mana:.0f} | Merges={merges}")
             continue
 
+        # Vision mode: strip perceptual attributes. The screenshot is the
+        # only place the model should learn Num/Color/Shape/Word from.
+        if hide_perceptual_attrs:
+            lines.append(
+                f"  [{label}] Occupied (see screenshot) "
+                f"| Mana={card_mana:.0f} | Merges={merges}"
+            )
+            continue
+
         attrs = []
 
         # Number
@@ -1003,6 +1160,15 @@ def describe_state(raw_state: dict, show_merge_previews: bool = False) -> str:
     # legal merge candidate this turn. Only rendered when show_merge_previews
     # is on (assisted ablation): the canonical benchmark withholds them so the
     # model has to estimate gains from the slot dump itself.
+    #
+    # Format note: the previous version emitted "Num=+2" for "Number gain
+    # tier = 2 (great)". This collided with the slot-dump format where
+    # "Num=-2.0" means the actual numeric value of the card, and small
+    # models (Qwen3-VL 4B, Llama-3.2 11B) consistently misread the preview
+    # as the resulting card's value. The format below uses tier WORDS
+    # (PERFECT/GREAT/GOOD/OK/neutral/BAD/TERRIBLE) inline with the multiplier
+    # so there is no overlap with the slot-value notation, and the action
+    # number leads each row to line up with the Valid actions block below.
     if show_merge_previews:
         previews = raw_state.get("merge_previews") or []
         active_dims = [
@@ -1011,17 +1177,33 @@ def describe_state(raw_state: dict, show_merge_previews: bool = False) -> str:
         ]
         if previews and active_dims:
             lines.append("")
-            lines.append("Merge previews (gain tier: -1=bad, 0=neutral, 1=ok, 2=great, 3=perfect):")
+            lines.append(
+                "Merge previews (per-dimension tier × multiplier — multipliers "
+                "compound across active dims):"
+            )
             for p in previews:
                 src = p.get("source", "?")
                 tgt = p.get("target", "?")
                 action = p.get("action")
                 parts = []
                 for dim in active_dims:
-                    g = p.get(f"{dim}_gain", 0)
-                    parts.append(f"{dim[:3].title()}={int(g):+d}")
-                action_str = f"a{action}" if action is not None else ""
-                lines.append(f"  {src}→{tgt} {action_str}: {', '.join(parts)}")
+                    g = int(p.get(f"{dim}_gain", 0))
+                    label, mult = _MERGE_TIER.get(g, (f"tier{g:+d}", "?"))
+                    parts.append(f"{_DIM_NAME[dim]} {label} ×{mult}")
+                action_str = f"a{action:<3}" if action is not None else "?   "
+                lines.append(f"  {action_str} {src}→{tgt}: {', '.join(parts)}")
+
+    # Sell-candidate hint — surfaces the highest-mana built slot and whether
+    # selling it RIGHT NOW would actually raise the score (i.e. push the bank
+    # past `Best`). This is the discipline check small models repeatedly
+    # fail: they sell single-merge cards (mana=9, no-op for the score) and
+    # never sit on a card long enough for it to compound. Lifting the
+    # arithmetic out of the model and into the state dump removes the
+    # cognitive cost of that comparison.
+    sell_hint = _build_sell_hint(slots, mana, mana_max)
+    if sell_hint:
+        lines.append("")
+        lines.append(sell_hint)
 
     # Valid actions
     valid = raw_state.get("valid_actions", [])
@@ -1072,12 +1254,20 @@ _COMPACT_COLOR = {
 }
 
 
-def _compact_slot(slot: dict) -> str:
+def _compact_slot(slot: dict, hide_perceptual_attrs: bool = False) -> str:
     """Render a single slot as a comma-separated cell, e.g. '+2,R,m15,x1' or '.'.
 
     Empty slot → ".". Hidden card (Memory mode) → "?,m15,x1" — only mana and
     merges are visible. Otherwise we emit one short token per active dimension
     plus mana and merges-done.
+
+    When ``hide_perceptual_attrs`` is True (vision-mode trail), the per-
+    dimension tokens are stripped: an occupied visible card becomes
+    ``X,m15,x1`` (occupancy + mana + merges only) so the screenshot remains
+    the sole source of Num/Color/Shape/Word. Mana and merges are HUD text
+    the model could read from pixels regardless, so we keep them in the
+    trail to preserve the "what did this slot look like last turn"
+    reasoning scratchpad the compact mode is built around.
     """
     if not slot.get("occupied", False):
         return "."
@@ -1086,6 +1276,8 @@ def _compact_slot(slot: dict) -> str:
 
     if slot.get("memory_hidden", False):
         parts.append("?")
+    elif hide_perceptual_attrs:
+        parts.append("X")
     else:
         # Number
         num_val = slot.get("number_value", 0.0)
@@ -1120,7 +1312,7 @@ def _compact_slot(slot: dict) -> str:
     return ",".join(parts)
 
 
-def _compact_slots_row(slots: list) -> str:
+def _compact_slots_row(slots: list, hide_perceptual_attrs: bool = False) -> str:
     """Render the row [new|s1|s2|s3|s4|s5] for one step.
 
     The first 6 entries of `slots` correspond to [new, 1, 2, 3, 4, 5]; any
@@ -1129,7 +1321,11 @@ def _compact_slots_row(slots: list) -> str:
     """
     if not slots:
         return "|".join(["."] * 6)
-    cells = [_compact_slot(slots[i]) if i < len(slots) else "." for i in range(6)]
+    cells = [
+        _compact_slot(slots[i], hide_perceptual_attrs=hide_perceptual_attrs)
+        if i < len(slots) else "."
+        for i in range(6)
+    ]
     return "|".join(cells)
 
 
@@ -1156,13 +1352,17 @@ def format_trail_entry(
     action: int,
     mana_before: float,
     mana_after: float,
+    hide_perceptual_attrs: bool = False,
 ) -> str:
     """One trail line for the compact history block.
 
     Layout:
         tN [new|s1|s2|s3|s4|s5] aA:annotation -> mAFTER(±DELTA)
+
+    ``hide_perceptual_attrs`` strips per-dimension tokens inside each cell
+    (vision-mode trail). See :func:`_compact_slot` for the cell format.
     """
-    row = _compact_slots_row(slots_before)
+    row = _compact_slots_row(slots_before, hide_perceptual_attrs=hide_perceptual_attrs)
     delta = mana_after - mana_before
     return (
         f"t{step_idx} [{row}] {_annotate_action(action)} "
@@ -1204,6 +1404,54 @@ Action annotations:
 Use the trail as your scratchpad: it tells you exactly what happened on every
 prior step. The CURRENT STATE block below it is the live, full-fidelity view
 of the board you must act on right now.\
+"""
+
+
+# Vision-mode variant of the compact history legend. Card attributes
+# (Num, Color, Shape, Word) are STRIPPED from both the current state
+# dump and every historical trail cell — the screenshot is the sole
+# source of perceptual information. Mana and merges-done are kept in
+# each cell as HUD-readable metadata so the trail still functions as
+# a per-slot "what happened" scratchpad.
+_COMPACT_HISTORY_LEGEND_VISION = """\
+============ HISTORY FORMAT (compact mode, vision) ============
+
+Before the CURRENT STATE block you will see a "PAST STEPS" log — one line
+per step, oldest first, in this exact layout:
+
+    tN [new|s1|s2|s3|s4|s5] aA:annotation -> mAFTER(±DELTA)
+
+  tN          : step index inside this episode (t0 = first decision)
+  [...]       : the six slots BEFORE the action, in order: new, slot 1..5
+  aA:...      : the action you took, with a short annotation
+  mAFTER      : your total mana right after the action resolved
+  ±DELTA      : the mana change from this action (negative = lost mana)
+
+Because this is a VISION run, the per-slot card attributes (number,
+colour, shape, word) are NOT included in either the current-state dump
+or the trail — the screenshot is your only source for those. Each trail
+cell is one of:
+
+  .                       empty slot
+  ?,mM,xK                 a hidden card (Memory mode) — neither text nor
+                          screenshot reveals its attributes; you only see
+                          mana M and merges-done K
+  X,mM,xK                 an occupied visible card at that turn — look at
+                          the screenshot (for the CURRENT state) or recall
+                          from previous screenshots (for past turns) to
+                          identify its number/colour/shape/word. The text
+                          only tells you the slot was occupied with mana M
+                          and merges-done K.
+
+Action annotations:
+  a0:draw                 spawn a fresh card in "new"
+  a1-a30:src>sD           move source slot onto build slot D (merges if D busy)
+  a31-a36:sell(src)       destroy the card in `src` and add its mana to total
+  a37:wait                no-op for one step
+
+Use the trail as your action-and-mana scratchpad; use the CURRENT STATE
+screenshot as the authoritative source for what each slot actually holds
+right now.\
 """
 
 
@@ -1283,6 +1531,7 @@ class LLMAgent(BaseAgent):
             self._game_modes,
             self.prompt,
             include_history_legend=(mode == "compact"),
+            vision_legend=use_screenshot,
         )
 
         # Conversation history (Mode B only)
@@ -1314,6 +1563,14 @@ class LLMAgent(BaseAgent):
         # leaves this off so the LLM has to estimate gains itself.
         self.show_merge_previews = show_merge_previews
 
+        # Set by act() to a human-readable reason string whenever the chosen
+        # action came from _fallback_action() instead of a real model pick
+        # (provider crashed, mid-backoff timeout, etc). Cleared at the top of
+        # every act() call. The benchmark runner reads this after act() and
+        # stamps it into events.jsonl so offline analysis can tell "real
+        # decision" apart from "silent fallback" — which used to be invisible.
+        self._last_action_fallback_reason: Optional[str] = None
+
     def set_game_modes(self, modes: dict):
         """Update game modes and rebuild the system prompt."""
         self._game_modes = modes
@@ -1321,6 +1578,7 @@ class LLMAgent(BaseAgent):
             modes,
             self.prompt,
             include_history_legend=(self.mode == "compact"),
+            vision_legend=self.use_screenshot,
         )
 
     def reset(self):
@@ -1333,6 +1591,10 @@ class LLMAgent(BaseAgent):
         import time as _time
         info = info or {}
         raw_state = info.get("raw_state", {})
+
+        # Reset per-step so a successful call clears any previous fallback
+        # marker. Set in the except branch below when we fall back.
+        self._last_action_fallback_reason = None
 
         # Build user message content blocks. We use the OpenAI/LiteLLM content
         # block format, which the provider layer translates if needed.
@@ -1353,7 +1615,9 @@ class LLMAgent(BaseAgent):
         # current-state dump as a single text block. The current state is
         # always full-fidelity — only history is compressed.
         state_text = describe_state(
-            raw_state, show_merge_previews=self.show_merge_previews
+            raw_state,
+            show_merge_previews=self.show_merge_previews,
+            hide_perceptual_attrs=self.use_screenshot,
         )
         if self.mode == "compact" and self._compact_trail:
             history_block = "PAST STEPS (compact trail, oldest first):\n" + "\n".join(
@@ -1435,6 +1699,10 @@ class LLMAgent(BaseAgent):
             latency_ms = (_time.monotonic() - started) * 1000.0
             logger.error(f"LLM provider error: {e}", exc_info=True)
             fallback = self._fallback_action(observation)
+            # Surface the fallback to the runner so it can mark this step in
+            # events.jsonl. Without this, crashed LLM calls are silently
+            # indistinguishable from real model picks in offline logs.
+            self._last_action_fallback_reason = f"llm_error: {e}"
             # Record the fallback into the pending trail too — otherwise the
             # next step would see a gap in the log.
             if self.mode == "compact":
@@ -1491,6 +1759,7 @@ class LLMAgent(BaseAgent):
                 action=pending["action"],
                 mana_before=pending["mana_before"],
                 mana_after=mana,
+                hide_perceptual_attrs=self.use_screenshot,
             )
             self._compact_trail.append(entry)
             # Bound the trail so a long episode can't blow up the prompt.

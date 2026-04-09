@@ -26,10 +26,11 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
-from .yedi_env import YediEnv, action_to_command
+from .yedi_env import YediEnv, BridgeDisconnectedError, action_to_command
 from .yedi_vlm_env import YediVLMEnv
 from .replay_logger import ReplayLogger
 from .benchmark_configs import TIERS, ALL_BENCHMARKS
@@ -38,6 +39,13 @@ from .agents.greedy_agent import GreedyAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("benchmark")
+
+# Maximum number of consecutive bridge failures (timeout, ws closed, etc.) we
+# tolerate before giving up on the whole run. With the per-episode catch in
+# place, a single hung draw_card no longer kills the run — but if every
+# episode in a row is failing, the bridge is genuinely dead and there's no
+# point burning the next 30s wait.
+MAX_CONSECUTIVE_BRIDGE_FAILURES = 3
 
 AGENT_TYPES = [
     "random",
@@ -127,6 +135,7 @@ def create_agent_from_registry(
         base_url=agent_cfg.base_url,
         max_tokens=agent_cfg.max_tokens,
         supports_vision=agent_cfg.supports_vision,
+        num_ctx=getattr(agent_cfg, "num_ctx", None),
     )
 
     llm_mode = mode_enum.memory_label  # "stateless" | "conversational" | "compact"
@@ -181,6 +190,11 @@ def run_episode(
         action = agent.act(obs, info)
         command = action_to_command(action)
 
+        # LLMAgent sets _last_action_fallback_reason on its silent-fallback
+        # path (provider crash etc.). Propagate to the replay log so offline
+        # analysis can distinguish real model picks from salvaged defaults.
+        fallback_reason = getattr(agent, "_last_action_fallback_reason", None)
+
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         step += 1
@@ -196,6 +210,7 @@ def run_episode(
                 terminated=terminated,
                 truncated=truncated,
                 info=info,
+                fallback_reason=fallback_reason,
             )
             # Log screenshots at key moments
             screenshot = info.get("screenshot")
@@ -399,10 +414,42 @@ def run_benchmark_with_registry(
     replay_logger = ReplayLogger(log_dir=log_dir)
 
     # Live trace store — used by the dashboard's Run page to stream LLM
-    # thinking. We do not record traces for the random agent (no LLM call).
-    from .run_trace import get_run_trace_store
-    trace = get_run_trace_store().get_or_create(record.id)
+    # thinking. We only create the trace for actual LLM agents; random and
+    # greedy never produce exchanges, and creating an empty trace would
+    # leave the dashboard's poll loop stuck on "Waiting for the model's
+    # first move…" forever (the JS distinguishes "no trace" from "trace
+    # exists but no entries yet").
     is_llm = agent_cfg.provider not in ("random", "greedy")
+    trace = None
+    if is_llm:
+        from .run_trace import get_run_trace_store
+        trace = get_run_trace_store().get_or_create(record.id)
+
+    # Counters used to decide when bridge failures have become a
+    # run-level death rather than a transient blip. Reset on every
+    # successful episode. ``failed_episodes`` is also tracked locally
+    # because the ``record`` variable above is a stale snapshot taken at
+    # create time — refreshing from disk for every check would be wasteful.
+    consecutive_bridge_failures = 0
+    successful_episodes = 0
+    failed_episodes = 0
+    last_bridge_error: Optional[str] = None
+
+    def _make_env_for(modes):
+        return env_cls(
+            server_url=server_url,
+            game_config={
+                "modes": modes,
+                "perfect_memory": perfect_memory,
+            },
+            max_steps=max_steps,
+        )
+
+    def _safe_close(e):
+        try:
+            e.close()
+        except Exception:  # pragma: no cover — close is best-effort
+            logger.exception("env.close raised; ignoring")
 
     try:
         for cfg_name, modes in config_modes.items():
@@ -411,10 +458,11 @@ def run_benchmark_with_registry(
             # Per-config closure that captures the current episode index
             # via a mutable holder. The agent only knows step_in_episode;
             # the runner advances ep_state["episode"] before each episode.
-            ep_state = {"episode": 0}
+            ep_state = {"episode": 0, "system_prompt": None}
 
             def _on_exchange(*, user_text, response, action, latency_ms,
                               error, step_in_episode, _cfg=cfg_name):
+                # 1. In-memory live trace (feeds the dashboard trace view).
                 trace.record(
                     config=_cfg,
                     episode=ep_state["episode"],
@@ -425,6 +473,25 @@ def run_benchmark_with_registry(
                     latency_ms=latency_ms,
                     error=error,
                 )
+                # 2. Persistent per-episode trace.jsonl. Writing through the
+                # replay_logger here (rather than inside run_episode) means
+                # every LLM call — including the fallback path where the
+                # runner never sees the error — lands on disk.
+                try:
+                    replay_logger.log_exchange(
+                        step_in_episode=step_in_episode,
+                        user_text=user_text,
+                        response=response,
+                        action=action,
+                        latency_ms=latency_ms,
+                        error=error,
+                        system_prompt=ep_state["system_prompt"],
+                        fallback_reason=(
+                            f"llm_error: {error}" if error else None
+                        ),
+                    )
+                except Exception:  # pragma: no cover — never let disk I/O break a run
+                    logger.exception("replay_logger.log_exchange raised; ignoring")
 
             on_exchange = _on_exchange if is_llm else None
 
@@ -444,20 +511,16 @@ def run_benchmark_with_registry(
             )
 
             # Capture the system prompt that this agent will use for this
-            # config so the dashboard can show it once at the top.
+            # config so the dashboard can show it once at the top. We also
+            # stash it in ep_state so the _on_exchange closure can stamp
+            # it into each episode's trace.jsonl header.
             if is_llm and hasattr(agent, "_system_prompt"):
                 trace.set_system_prompt(cfg_name, agent._system_prompt)
+                ep_state["system_prompt"] = agent._system_prompt
 
             logger.info(f"\n{'='*60}\nBenchmark: {cfg_name} ({modes})\nAgent: {agent.name}\n{'='*60}")
 
-            env = env_cls(
-                server_url=server_url,
-                game_config={
-                    "modes": modes,
-                    "perfect_memory": perfect_memory,
-                },
-                max_steps=max_steps,
-            )
+            env = _make_env_for(modes)
 
             try:
                 for ep_idx in range(episodes_per_config):
@@ -465,11 +528,42 @@ def run_benchmark_with_registry(
                     ep_state["episode"] = ep_idx
                     logger.info(f"  Episode {ep_idx+1}/{episodes_per_config}...")
                     ep_started = _now_iso()
-                    result = run_episode(
-                        env, agent, replay_logger,
-                        max_steps=max_steps * 2,
-                        cancel_event=cancel_event,
-                    )
+
+                    try:
+                        result = run_episode(
+                            env, agent, replay_logger,
+                            max_steps=max_steps * 2,
+                            cancel_event=cancel_event,
+                        )
+                    except BridgeDisconnectedError as bde:
+                        # The browser bridge died (timeout, ws closed, ASGI
+                        # send error). Don't take down the whole run — record
+                        # the failure, recreate the env so the next episode
+                        # gets a fresh ws connection, and keep going.
+                        consecutive_bridge_failures += 1
+                        failed_episodes += 1
+                        err_msg = str(bde)
+                        last_bridge_error = err_msg
+                        logger.warning(
+                            "  Episode %d/%d FAILED (bridge): %s",
+                            ep_idx + 1, episodes_per_config, err_msg,
+                        )
+                        rr.record_episode_error(
+                            record.id, cfg_name, ep_idx, err_msg,
+                        )
+                        if consecutive_bridge_failures >= MAX_CONSECUTIVE_BRIDGE_FAILURES:
+                            raise BridgeDisconnectedError(
+                                f"aborting run after "
+                                f"{consecutive_bridge_failures} consecutive "
+                                f"bridge failures: {err_msg}"
+                            ) from bde
+                        # Recreate the env so the next attempt starts from a
+                        # clean ws connection. The old env may be holding a
+                        # half-dead socket.
+                        _safe_close(env)
+                        env = _make_env_for(modes)
+                        continue
+
                     rr.append_episode(
                         record.id,
                         cfg_name,
@@ -483,14 +577,32 @@ def run_benchmark_with_registry(
                             finished_at=_now_iso(),
                         ),
                     )
+                    consecutive_bridge_failures = 0
+                    successful_episodes += 1
                     logger.info(
                         f"  -> Max mana: {result['max_mana']}, steps: {result['steps']}"
                     )
             finally:
-                env.close()
+                _safe_close(env)
+
+        # Run finished its config loop. If at least one episode succeeded,
+        # mark COMPLETED — the dashboard can show per-episode bridge errors
+        # in the run detail. If literally nothing ran, mark FAILED with the
+        # accumulated error so it doesn't masquerade as a successful empty
+        # run.
+        if successful_episodes == 0 and failed_episodes > 0:
+            rr.set_error(
+                record.id,
+                f"all {failed_episodes} episodes failed; last error: {last_bridge_error}",
+            )
+            return rr.get(record.id)
 
         final = rr.update_status(record.id, RunStatus.COMPLETED)
-        logger.info(f"\nRun {record.id} COMPLETED — see registry for full results")
+        logger.info(
+            "\nRun %s COMPLETED — %d/%d episodes ok, %d bridge errors",
+            record.id, successful_episodes, record.episodes_total(),
+            failed_episodes,
+        )
         return final
 
     except RunCancelled:

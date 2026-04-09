@@ -41,7 +41,7 @@
         <div class="form-row" style="margin-top: 16px;">
             <label>Ablations <span class="dim">(off = canonical benchmark)</span></label>
             <div class="checkbox-row">
-                <label title="When on, the LLM sees the bridge's pre-computed merge_previews block (per-dim gain tier for every legal merge). Off = the model has to estimate gains itself.">
+                <label title="When on, the LLM sees the bridge's pre-computed merge_previews block (per-dim gain tier for every legal merge). Off = the model has to estimate gains itself. Not compatible with vision modes — the previews leak memory-hidden card values and bypass visual perception." id="b-show-previews-label">
                     <input type="checkbox" id="b-show-previews">
                     Show merge previews to LLM (assisted)
                 </label>
@@ -49,6 +49,9 @@
                     <input type="checkbox" id="b-perfect-memory">
                     Perfect memory (reveal hidden cards)
                 </label>
+            </div>
+            <div class="dim" id="b-show-previews-hint" style="margin-top: 4px; display: none;">
+                Merge previews are disabled in vision modes — they contain pre-computed per-dimension gains that bypass visual perception and leak memory-hidden values.
             </div>
         </div>
 
@@ -148,6 +151,31 @@
         document.getElementById("config-summary").textContent = `${checked.length} selected`;
     }
 
+    // Vision modes are incompatible with show_merge_previews: the preview
+    // block pre-computes per-dimension gains using real card values, which
+    // both trivialises the visual perception test and leaks any memory-hidden
+    // card's value. Lock the checkbox off and surface a hint when the user
+    // picks a vision mode. The server enforces the same rule independently
+    // so API/CLI callers can't bypass this.
+    function applyVisionLock() {
+        const mode = document.getElementById("b-mode").value;
+        const isVision = mode.startsWith("vision");
+        const cb = document.getElementById("b-show-previews");
+        const hint = document.getElementById("b-show-previews-hint");
+        const label = document.getElementById("b-show-previews-label");
+        if (isVision) {
+            cb.checked = false;
+            cb.disabled = true;
+            label.classList.add("dim");
+            hint.style.display = "block";
+        } else {
+            cb.disabled = false;
+            label.classList.remove("dim");
+            hint.style.display = "none";
+        }
+    }
+    document.getElementById("b-mode").addEventListener("change", applyVisionLock);
+
     document.getElementById("bench-form").addEventListener("submit", async (ev) => {
         ev.preventDefault();
         const agentId = document.getElementById("b-agent").value;
@@ -197,6 +225,7 @@
 
     loadAgents();
     loadConfigs();
+    applyVisionLock();
     window.YediApp.onBridgeStatusChange(applyBridgeState);
 })();
 </script>
