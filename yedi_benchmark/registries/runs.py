@@ -271,11 +271,14 @@ class RunRegistry:
     @staticmethod
     def _recompute_aggregates(cfg: ConfigResult) -> None:
         manas = [e.max_mana for e in cfg.episodes]
+        surpluses = [e.surplus for e in cfg.episodes]
         if not manas:
-            cfg.mean_max_mana = 0.0
-            cfg.std_max_mana = 0.0
-            cfg.best_max_mana = 0.0
+            cfg.mean_max_mana = cfg.std_max_mana = cfg.best_max_mana = 0.0
+            cfg.mean_surplus = cfg.std_surplus = cfg.best_surplus = 0.0
             return
         cfg.mean_max_mana = float(sum(manas) / len(manas))
         cfg.std_max_mana = float(statistics.pstdev(manas)) if len(manas) > 1 else 0.0
         cfg.best_max_mana = float(max(manas))
+        cfg.mean_surplus = float(sum(surpluses) / len(surpluses))
+        cfg.std_surplus = float(statistics.pstdev(surpluses)) if len(surpluses) > 1 else 0.0
+        cfg.best_surplus = float(max(surpluses))

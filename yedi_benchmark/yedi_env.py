@@ -36,6 +36,11 @@ except ImportError:
 
 logger = logging.getLogger("yedi_env")
 
+# The game always starts with this mana balance.  Scores are more
+# meaningful as *surplus* (mana earned above the initial grant) because
+# the initial 200 is a sunk cost that doesn't reflect agent skill.
+INITIAL_MANA = 200
+
 
 class BridgeDisconnectedError(RuntimeError):
     """Raised when the WebSocket bridge to the browser game has died.
@@ -488,9 +493,11 @@ class YediEnv(gym.Env):
         truncated = False  # Timer expiry is a normal end, not truncation
 
         obs = self._state_to_obs(self._state)
+        max_mana = self._state.get("mana_max", 0)
         info = {
             "raw_state": self._state,
-            "max_mana": self._state.get("mana_max", 0),
+            "max_mana": max_mana,
+            "surplus": max_mana - INITIAL_MANA,
             "step": self._step_count,
         }
 

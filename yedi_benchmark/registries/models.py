@@ -176,6 +176,7 @@ class EpisodeResult(BaseModel):
 
     episode_idx: int
     max_mana: float
+    surplus: float = 0.0  # max_mana - initial_mana (200); the actual score
     total_reward: float
     steps: int
     game_over: bool
@@ -198,6 +199,10 @@ class ConfigResult(BaseModel):
     mean_max_mana: float = 0.0
     std_max_mana: float = 0.0
     best_max_mana: float = 0.0
+    # Surplus = max_mana - initial_mana (200). This is the primary score.
+    mean_surplus: float = 0.0
+    std_surplus: float = 0.0
+    best_surplus: float = 0.0
 
 
 class RunRecord(BaseModel):

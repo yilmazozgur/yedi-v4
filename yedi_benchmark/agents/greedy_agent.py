@@ -69,6 +69,13 @@ _DIM_TO_GAIN_KEY = {
     "word":   "word_gain",
 }
 
+# Neutral values by number mode — a merged card with this value is dead
+# weight (adds/multiplies nothing) and should be sold to free the slot.
+_NUMBER_NEUTRAL = {
+    "add": 0.0,
+    "multiply": 1.0,
+}
+
 
 def _active_dims(raw_state: dict) -> list[str]:
     out = []
@@ -144,6 +151,29 @@ class GreedyAgent(BaseAgent):
                 if not valid_actions or action in valid_actions:
                     logger.debug("greedy: sell maxed slot %d (action %d)", build_idx, action)
                     return action
+
+        # ---------------- 1b. Sell neutral cards ----------------------
+        # A merged card that reached the identity value for its mode
+        # (0 for add, 1 for multiply) can never improve another card.
+        # Selling it frees the slot for productive merges.
+        number_mode = raw_state.get("mode_number", "")
+        neutral_val = _NUMBER_NEUTRAL.get(number_mode)
+        if neutral_val is not None:
+            for build_idx, slot in enumerate(build_slots, start=1):
+                if not slot.get("occupied"):
+                    continue
+                merges = int(slot.get("merges_done", 0) or 0)
+                if merges == 0:
+                    continue  # Only sell merged cards that became neutral
+                nv = float(slot.get("number_value", -9999))
+                if nv == neutral_val:
+                    action = _sell_action(build_idx)
+                    if not valid_actions or action in valid_actions:
+                        logger.debug(
+                            "greedy: sell neutral slot %d (num=%s, mode=%s, action %d)",
+                            build_idx, nv, number_mode, action,
+                        )
+                        return action
 
         # ---------------- 2. Place / merge / sell the "new" card --------
         if new_slot.get("occupied"):

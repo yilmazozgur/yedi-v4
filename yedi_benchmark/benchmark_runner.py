@@ -285,6 +285,7 @@ def run_episode(
 
     return {
         "max_mana": info.get("max_mana", 0),
+        "surplus": info.get("surplus", 0),
         "total_reward": total_reward,
         "steps": step,
         "game_over": terminated,
@@ -343,22 +344,22 @@ def run_benchmark(
             logger.info(f"  Episode {ep+1}/{episodes_per_config}...")
             result = run_episode(env, agent, replay_logger, max_steps=max_steps * 2)
             episode_results.append(result)
-            logger.info(f"  -> Max mana: {result['max_mana']}, steps: {result['steps']}")
+            logger.info(f"  -> Surplus: {result['surplus']}, steps: {result['steps']}")
 
         env.close()
 
         # Aggregate
-        max_manas = [r["max_mana"] for r in episode_results]
+        surpluses = [r["surplus"] for r in episode_results]
         results[config_name] = {
-            "mean_max_mana": float(np.mean(max_manas)),
-            "std_max_mana": float(np.std(max_manas)),
-            "max_max_mana": float(np.max(max_manas)),
+            "mean_surplus": float(np.mean(surpluses)),
+            "std_surplus": float(np.std(surpluses)),
+            "max_surplus": float(np.max(surpluses)),
             "episodes": episode_results,
         }
 
-        logger.info(f"  Summary: mean={results[config_name]['mean_max_mana']:.0f} "
-                     f"std={results[config_name]['std_max_mana']:.0f} "
-                     f"best={results[config_name]['max_max_mana']:.0f}")
+        logger.info(f"  Summary: mean_surplus={results[config_name]['mean_surplus']:.0f} "
+                     f"std={results[config_name]['std_surplus']:.0f} "
+                     f"best={results[config_name]['max_surplus']:.0f}")
 
     # Save results
     results_path = Path(log_dir) / f"benchmark_{agent_type}_{int(time.time())}.json"
@@ -637,6 +638,7 @@ def run_benchmark_with_registry(
                         EpisodeResult(
                             episode_idx=ep_idx,
                             max_mana=float(result["max_mana"]),
+                            surplus=float(result["surplus"]),
                             total_reward=float(result["total_reward"]),
                             steps=int(result["steps"]),
                             game_over=bool(result["game_over"]),
@@ -648,7 +650,7 @@ def run_benchmark_with_registry(
                     consecutive_bridge_failures = 0
                     successful_episodes += 1
                     logger.info(
-                        f"  -> Max mana: {result['max_mana']}, steps: {result['steps']}"
+                        f"  -> Surplus: {result['surplus']}, steps: {result['steps']}"
                     )
             finally:
                 _safe_close(env)
