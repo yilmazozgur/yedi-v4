@@ -36,7 +36,7 @@ def _record(t: RunTrace, n: int = 1, *, config: str = "easy_math_add"):
             step=i,
             user_text=f"in {i}",
             response=f"out {i}",
-            action=i % 38,
+            action=i % 37,
             latency_ms=12.5,
         ))
     return ids
@@ -101,7 +101,7 @@ class TestRunTrace:
         t.record(
             config="easy_math_add", episode=0, step=0,
             user_text="state", response="(provider failed)",
-            action=37, latency_ms=None, error="HTTP 500",
+            action=0, latency_ms=None, error="HTTP 500",
         )
         e = t.snapshot()["entries"][0]
         assert e["error"] == "HTTP 500"
@@ -270,7 +270,7 @@ class _StubEnv:
 
     @staticmethod
     def _obs():
-        return {"action_mask": np.ones(38, dtype=np.int8)}
+        return {"action_mask": np.ones(37, dtype=np.int8)}
 
     @staticmethod
     def _info():

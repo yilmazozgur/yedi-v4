@@ -1,0 +1,652 @@
+\documentclass[11pt]{article}
+
+% ---- packages ----
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{subcaption}
+\usepackage[margin=1in]{geometry}
+\usepackage{natbib}
+
+% ---- helper for plan notes ----
+\newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+\newcommand{\plan}[1]{\textcolor{blue}{\textit{#1}}}
+
+\title{Yedi: A Multi-Dimensional Strategic Reasoning Benchmark\\for Large Language and Vision-Language Models}
+
+\author{
+  \todo{Authors and affiliations}
+}
+
+\date{}
+
+\begin{document}
+\maketitle
+
+% ======================================================================
+\begin{abstract}
+\plan{%
+  3--4 sentences. Key points to hit:
+  \begin{itemize}
+    \item Existing game benchmarks test single-axis reasoning (math, spatial, language).
+      Real decisions require simultaneous optimization across multiple cognitive
+      dimensions under resource constraints.
+    \item We present Yedi, a configurable card-game benchmark where merge outcomes
+      are determined by multiplicative interaction across 1--4 independent
+      dimensions (numerical, visual, spatial, verbal). One bad dimension
+      ruins the compound gain --- models must optimize the worst-case factor,
+      not the average.
+    \item We provide a Gymnasium environment with 40+ difficulty configurations,
+      metadata and screenshot observation modes, and three baseline agents
+      (random, greedy, LLM/VLM).
+    \item Early results: frontier LLMs surpass a strong greedy baseline in
+      metadata mode. Comparing metadata vs.\ vision modes on identical
+      configs quantifies a ``vision tax'' that isolates perceptual grounding
+      cost from strategic reasoning ability.
+  \end{itemize}
+}
+\end{abstract}
+
+% ======================================================================
+\section{Introduction}
+\label{sec:intro}
+
+\plan{%
+  Motivation paragraph (why another benchmark?):
+  \begin{itemize}
+    \item LLMs/VLMs are increasingly evaluated on game-playing tasks
+      (Tetris, 2048, chess, Go, Atari). These are valuable but typically
+      test a single axis --- spatial planning, arithmetic, pattern recognition.
+    \item Real-world decisions (medical, financial, engineering) require
+      balancing multiple incommensurable factors simultaneously. A treatment
+      that is optimal for one organ system but harmful to another is not a
+      good treatment. Current benchmarks do not test this compound trade-off
+      reasoning.
+    \item Games with multi-dimensional scoring are a natural testbed, but
+      most such games are too complex to evaluate systematically
+      (Civilization, Factorio) or too simple to differentiate models
+      (multi-objective toy gridworlds).
+  \end{itemize}
+}
+
+\plan{%
+  What Yedi offers (contribution paragraph):
+  \begin{itemize}
+    \item A card game with 4 independent scoring dimensions (number, color,
+      shape, word), each with multiple sub-modes. Merge outcomes are the
+      PRODUCT of per-dimension multipliers, so one bad factor dominates.
+    \item Dual resource constraints (mana budget + move budget) that force
+      planning beyond greedy single-step optimization.
+    \item A configurable difficulty surface: 40+ mode combinations from
+      single-dimension (isolate one cognitive skill) to 4-dimension
+      (compound trade-off reasoning).
+    \item Two observation modes --- structured metadata and raw screenshots ---
+      on the same underlying task, enabling controlled measurement of the
+      perceptual grounding cost (``vision tax'').
+    \item Open-source Gymnasium environment with WebSocket bridge to the
+      real game engine, ensuring scoring fidelity.
+  \end{itemize}
+}
+
+\plan{%
+  Results preview (1 paragraph):
+  \begin{itemize}
+    \item Frontier LLMs beat a strong greedy baseline across all tested
+      configs in metadata mode.
+    \item Random agent defines a clear floor (score $\approx$ starting mana).
+    \item Greedy agent provides a calibrated mid-point.
+    \item Difficulty scales predictably with the number of active dimensions.
+    \item \todo{Vision mode results once we have them.}
+  \end{itemize}
+}
+
+
+% ======================================================================
+\section{Related Work}
+\label{sec:related}
+
+Our work sits at the intersection of game-based AI evaluation, multi-objective
+decision making, and vision-language model benchmarking. We organize prior work
+into four areas.
+
+\subsection{Game-Based Benchmarks for LLM and VLM Agents}
+
+A growing body of work uses games to evaluate language and vision-language
+models as interactive agents. SmartPlay~\citep{wu2024smartplay} was among the
+first dedicated benchmarks, testing LLMs across six text-based games spanning
+spatial reasoning, planning, and object dependencies. GameBench~\citep{costarelli2024gamebench}
+extended this to nine game environments, each targeting a different strategic
+reasoning axis, while GTBench~\citep{duan2024gtbench} introduced game-theoretic
+structure with Monte Carlo Tree Search opponents across complete- and
+incomplete-information settings. LLMArena~\citep{chen2024llmarena} and
+GameArena~\citep{hu2025gamearena} further explored multi-agent competitive
+evaluation and live human--AI interaction respectively.
+DSGBench~\citep{tang2025dsgbench} shares our emphasis on multi-dimensional
+evaluation, scoring agents across five specific capability dimensions within
+complex strategy games.
+
+On the vision side, lmgame-Bench~\citep{hu2026lmgamebench} wraps six
+video/puzzle games in a unified Gymnasium API with perception scaffolds for
+LLMs, while V-MAGE~\citep{zheng2025vmage} evaluates VLMs on arcade games
+where all information is conveyed solely through screenshots.
+Cradle~\citep{tan2025cradle} demonstrated general computer control via
+screenshots in open-world games (Red Dead Redemption~2, Cities: Skylines),
+and VideoGameBench~\citep{zhang2025videogamebench} tested VLMs on 23 classic
+video games, finding that even the best model completes under 1\% of the
+benchmark. GameWorld~\citep{ouyang2026gameworld} provides a browser-based
+benchmark with state-verifiable scoring, comparing raw-input and
+semantic-action interfaces.
+
+Most directly relevant is BALROG~\citep{paglieri2025balrog}, which aggregates
+six RL game environments (BabyAI, Crafter, TextWorld, MiniHack, NetHack) and
+evaluates both LLMs and VLMs with text and image observations. Their central
+finding---that several models perform \emph{worse} with visual
+representations---motivates our controlled ``vision tax'' measurement. Our work
+complements BALROG by focusing on a card game domain that tests
+multi-dimensional strategic reasoning rather than grid-world navigation.
+
+Earlier foundations include the Arcade Learning Environment~\citep{bellemare2013ale},
+which established pixel-based game evaluation for RL; the NetHack Learning
+Environment~\citep{kuttler2020nethack}, which supports multiple observation
+modalities for the same underlying game; TextWorld~\citep{cote2018textworld}
+for procedurally generated text adventures;
+MineDojo~\citep{fan2022minedojo} and MineRL~\citep{guss2019minerl} for
+Minecraft-based benchmarks; AgentBench~\citep{liu2024agentbench} for
+multi-environment LLM agent evaluation; and
+Atari-GPT~\citep{waytowich2024atarigpt}, which applied modern VLMs to classic
+Atari games as zero-shot controllers.
+
+\subsection{Card Game AI}
+
+Card games pose distinct challenges for AI: imperfect information, stochastic
+draws, and strategic depth within compact state spaces.
+Pluribus~\citep{brown2019pluribus} achieved superhuman performance in six-player
+no-limit Texas Hold'em using game-theoretic self-play, and
+PokerBench~\citep{zhuang2025pokerbench} later evaluated LLMs on 11,000 poker
+scenarios, finding that even GPT-4 achieves only 54\% accuracy.
+The Hanabi Challenge~\citep{bard2020hanabi} proposed the cooperative card game
+Hanabi as an AI benchmark emphasizing theory-of-mind reasoning under imperfect
+information. More recently, \citet{wang2025llmcardgames} systematically
+evaluated LLMs across eight diverse card games (DouDizhu, Mahjong, Uno, Gin
+Rummy, Hold'em variants), finding that fine-tuning can approach strong baselines
+but at the cost of general capability. RL approaches have also been applied to
+complex collectible card games such as Hearthstone~\citep{hearthstone2023}.
+Cicero~\citep{meta2022cicero} demonstrated human-level play in Diplomacy by
+combining language models with strategic reasoning in a multi-player,
+imperfect-information setting.
+
+Yedi differs from these in two key respects: (1)~merge outcomes are determined
+by the \emph{product} of per-dimension multipliers across 1--4 independent
+cognitive dimensions, so one bad dimension ruins the compound gain; and (2)~the
+benchmark supports both structured-metadata and screenshot observation modes for
+the same underlying task, enabling controlled measurement of the perceptual
+grounding cost.
+
+\subsection{Multi-Objective Decision Making}
+
+The multi-objective RL (MORL) literature addresses agents that must optimize
+vector-valued rewards. \citet{hayes2022morl} provide a practical guide covering
+utility functions, scalarization approaches, and Pareto-based methods for
+sequential decision problems. Yedi's multiplicative scoring can be viewed as a
+specific scalarization: $r = \prod_{d \in \text{active}} m_d$, where $m_d$ is
+the per-dimension merge multiplier. Unlike additive scalarizations (where
+strength in one dimension compensates for weakness in another), the
+multiplicative form is dominated by the \emph{worst} factor---a property that
+makes balanced competence across all dimensions essential.
+
+This connects to resource-constrained planning in LLM agents.
+AucArena~\citep{chen2024aucarena} tests LLMs on budget management and
+adaptive strategy in auction settings, while \citet{huang2024planningsurvey}
+survey LLM planning capabilities including task decomposition, plan selection,
+and reflection---all of which Yedi requires within its dual-constraint
+(mana budget + move budget) framework.
+
+\subsection{Cognitive Benchmarks and Vision-Language Evaluation}
+
+Standard LLM benchmarks---MMLU~\citep{hendrycks2021mmlu},
+GPQA~\citep{rein2023gpqa}, MATH~\citep{hendrycks2021math},
+BIG-bench~\citep{srivastava2023bigbench} and its hard
+subset~\citep{suzgun2023bigbenchhard}---test knowledge and reasoning through
+independent questions with additive scoring. A model scoring 90\% on each of
+four subtasks achieves a 90\% average; a model achieving $0.9\times$ in each of
+four Yedi dimensions scores $0.9^4 = 0.66\times$, dramatically penalizing any
+weakness. Chollet's \emph{On the Measure of Intelligence}~\citep{chollet2019measure}
+and the Abstraction and Reasoning Corpus (ARC) advocate for benchmarks that test
+skill acquisition and generalization from cognitive-science priors. Yedi shares
+this philosophy---each game configuration presents a novel combination of
+dimension rules---but extends it to sequential decision-making under resource
+constraints.
+
+Recent work has begun applying psychometric frameworks to LLMs.
+\citet{reddy2025chcllm} applied the Cattell--Horn--Carroll (CHC) theory of
+cognitive abilities to frontier models, finding a ``catastrophic paradox''
+where models excel at crystallized knowledge but fail psychometric scoring.
+\citet{pellert2024aipsychometrics} demonstrated that standard psychometric
+inventories can measure LLM psychological traits. Yedi can be viewed as a
+\emph{behavioral} cognitive assessment that measures fluid reasoning (Gf),
+quantitative reasoning (Gq), and visual processing (Gv) through observed
+gameplay rather than self-report, potentially avoiding the validity concerns
+these works raise.
+
+For vision-language evaluation specifically, MMBench~\citep{liu2024mmbench},
+MM-Vet~\citep{yu2024mmvet}, and SEED-Bench~\citep{li2024seedbench} test
+fine-grained perceptual abilities in static settings.
+SeeClick/ScreenSpot~\citep{cheng2024seeclick} and
+ScreenQA~\citep{hsiao2025screenqa} focus on GUI grounding from screenshots.
+OSWorld~\citep{xie2024osworld} and AndroidWorld~\citep{rawles2025androidworld}
+test agents on real computer and mobile tasks, while
+WebArena~\citep{zhou2024webarena} and
+VisualWebArena~\citep{koh2024visualwebarena} provide web-based agent
+benchmarks. VisualWebArena is particularly relevant as it compares agents
+using accessibility trees (structured text) versus screenshots for the same
+web tasks---directly analogous to our metadata-versus-vision design.
+Our benchmark builds on the Gymnasium standard
+interface~\citep{towers2024gymnasium} and, while Unity
+ML-Agents~\citep{juliani2018unityml} provides RL integration for Unity games,
+we use a WebSocket bridge to the WebGL build to enable browser-based deployment
+and native screenshot capture.
+
+
+% ======================================================================
+\section{The Yedi Game}
+\label{sec:game}
+
+\plan{%
+  Explain the game to a reader who has never seen it. This section should
+  be self-contained. Use a figure showing the game board layout.
+}
+
+\subsection{Board and Actions}
+\plan{%
+  \begin{itemize}
+    \item Board: 1 ``new'' slot, 5 build slots, sell action.
+    \item Actions: DRAW (spawn card), MOVE/MERGE (place or combine),
+      SELL (convert card mana to score). 37 discrete actions total.
+    \item Two scarce resources: mana (spent on draws, recovered on sells)
+      and moves (fixed budget per game, typically 100).
+    \item Score = peak mana ever reached during the game.
+  \end{itemize}
+  \todo{Figure: game board screenshot with annotations.}
+}
+
+\subsection{Dimensions and Modes}
+\plan{%
+  \begin{itemize}
+    \item Each card carries attributes across 4 dimensions: number, color,
+      shape, word. Each dimension has multiple sub-modes that change the
+      merge semantics.
+    \item Number: add, multiply, GCD, sort, trigonometry, vector, interval.
+    \item Color: additive mixing, subtractive mixing, grayscale, text-color.
+    \item Shape: triangle rotation, rectangle, Kanizsa illusions, Hanoi,
+      sphere, triple.
+    \item Word: antonyms (verbs, nouns, adjectives), synonyms, grammar
+      pairs, question-answer pairs, scrabble.
+    \item 3 additional dimensions exist in the full game (Music/beat timing,
+      Memory/hidden cards, Motor/drag accuracy) but are not the primary
+      focus of this benchmark. Memory is partially supported (perfect\_memory
+      ablation flag).
+  \end{itemize}
+  \todo{Table: all modes with brief description and neutral/identity card.}
+}
+
+\subsection{Merge Mechanics}
+\label{sec:merge}
+\plan{%
+  This is the core mechanic and the key thing that makes Yedi interesting.
+  Explain carefully.
+  \begin{itemize}
+    \item When two cards merge, each active dimension independently produces
+      a multiplier applied to the target card's mana.
+    \item Multiplier tiers: PERFECT (2.5$\times$), GREAT (2.0$\times$),
+      GOOD (1.5$\times$), OK ($\sim$1.1$\times$), NEUTRAL (1.0$\times$),
+      BAD (0.9$\times$), TERRIBLE (0.7$\times$).
+    \item Multipliers are applied sequentially across dimensions:
+      $\text{mana}_{\text{new}} = \text{mana}_{\text{old}} \times
+      \prod_{d \in \text{active}} m_d$.
+    \item Key insight: one BAD dimension ($m_d = 0.9$) washes out two
+      GREAT dimensions ($2.0 \times 2.0 \times 0.9 = 3.6$ vs.\
+      $2.0 \times 2.0 \times 2.0 = 8.0$). The worst dimension bounds
+      the outcome.
+    \item Each card has a 3-merge cap. After 3 merges the card must be sold.
+    \item Worked example with concrete numbers showing the exponential
+      growth from chained perfect merges vs.\ the collapse from one
+      bad merge.
+  \end{itemize}
+  \todo{Figure: merge multiplier interaction diagram.}\\
+  \todo{Table: concrete example of 3-merge chain across 1, 2, 3, 4 dims.}
+}
+
+
+% ======================================================================
+\section{Benchmark Design}
+\label{sec:benchmark}
+
+\subsection{Environment}
+\plan{%
+  \begin{itemize}
+    \item Gymnasium interface: \texttt{reset()}/\texttt{step(action)}
+      returning \texttt{(obs, reward, terminated, truncated, info)}.
+    \item Action space: \texttt{Discrete(37)} --- 0=draw, 1--30=move/merge,
+      31--36=sell.
+    \item Observation: metadata dict (mana, slots with card attributes,
+      action mask) or screenshot (960$\times$540 PNG).
+    \item WebSocket bridge to Unity WebGL ensures merge scoring uses the
+      identical C\# code as the real game --- no re-implementation drift.
+    \item Deterministic seeding for reproducibility.
+  \end{itemize}
+  \todo{Architecture diagram: Python env $\leftrightarrow$ WebSocket
+    $\leftrightarrow$ Unity.}
+}
+
+\subsection{Configurations}
+\plan{%
+  \begin{itemize}
+    \item 40+ predefined configurations spanning 1--4 active dimensions.
+    \item Difficulty tiers: easy (1 dim, simple modes), medium (2 dims),
+      hard (3--4 dims, complex modes).
+    \item Each config specifies which dimensions are active and which
+      sub-mode each uses.
+    \item Standardized episode length (100 moves), starting mana (200),
+      merge cap (3).
+  \end{itemize}
+  \todo{Table: representative configs used in experiments, with mode
+    combination and difficulty tier.}
+}
+
+\subsection{Observation Modes}
+\plan{%
+  \begin{itemize}
+    \item \textbf{Metadata mode}: structured text description of each slot's
+      card attributes (Num=3, Color=Red, Shape=triangle-up, Word=help),
+      mana values, merge counts. All information is explicit.
+    \item \textbf{Vision mode}: 960$\times$540 screenshot of the game board.
+      The model must extract card attributes visually. Same underlying game
+      state, same action space.
+    \item Running the same config in both modes isolates the ``vision tax''
+      --- the performance drop attributable to perceptual grounding rather
+      than strategic reasoning.
+    \item \textbf{Merge preview ablation}: optionally expose the bridge's
+      pre-computed merge scores to the agent. Measures whether the model's
+      bottleneck is evaluation (computing merge quality) or planning
+      (choosing which merge to execute given known quality).
+  \end{itemize}
+}
+
+\subsection{Metrics}
+\plan{%
+  \begin{itemize}
+    \item \textbf{Primary}: max mana (peak total mana during the episode).
+      Single scalar, matches the human scoring system.
+    \item \textbf{Secondary}: surplus (max mana $-$ starting mana), total
+      reward, steps used, game-over rate.
+    \item \textbf{Diagnostic}: merge tier distribution (how many PERFECT,
+      GREAT, GOOD, BAD merges), sell timing (merges done when sold),
+      wasted draws, preview adherence rate, mana trajectory over time.
+    \item Report mean $\pm$ std over $N$ episodes per config.
+  \end{itemize}
+}
+
+
+% ======================================================================
+\section{Agents}
+\label{sec:agents}
+
+\subsection{Random Agent (Floor)}
+\plan{%
+  Uniformly samples from valid actions. Establishes the score floor.
+  Expected score $\approx$ starting mana (200) since random merges are
+  equally likely to help or hurt, while draws steadily drain mana.
+}
+
+\subsection{Greedy Agent (Calibrated Baseline)}
+\plan{%
+  \begin{itemize}
+    \item Uses the bridge's pre-computed merge previews to pick the merge
+      with the highest minimum gain across active dimensions.
+    \item Decision priority: sell maxed cards $\to$ merge if min-gain
+      $\geq$ threshold $\to$ place into empty slot $\to$ sell new card.
+    \item No lookahead beyond one step. No inter-slot merges.
+    \item Represents the performance ceiling of ``perfect local information,
+      no planning.''
+  \end{itemize}
+}
+
+\subsection{LLM Agent (Metadata Mode)}
+\plan{%
+  \begin{itemize}
+    \item Receives structured text description of game state + valid actions.
+    \item System prompt explains game rules, merge mechanics, scoring.
+    \item Outputs a single action integer per turn.
+    \item Tested with: \todo{list models --- Claude, GPT-4, open-source
+      models at various scales.}
+    \item Compact history trail provides last $N$ steps as context.
+  \end{itemize}
+}
+
+\subsection{VLM Agent (Vision Mode)}
+\plan{%
+  \begin{itemize}
+    \item Receives screenshot + minimal text (mana, step count, valid
+      actions).
+    \item Must extract card attributes (numbers, colors, shapes, words)
+      from the rendered image.
+    \item Same strategic reasoning required as metadata mode, plus visual
+      grounding.
+    \item \todo{Tested with: Claude vision, GPT-4V, open-source VLMs.}
+  \end{itemize}
+}
+
+
+% ======================================================================
+\section{Experiments}
+\label{sec:experiments}
+
+\plan{%
+  This section will be filled in as we run more benchmarks.
+  Structure the results around 3 research questions.
+}
+
+\subsection{RQ1: Do LLMs exhibit multi-dimensional strategic reasoning?}
+\plan{%
+  \begin{itemize}
+    \item Compare LLM agents vs.\ greedy vs.\ random across single-dim
+      and multi-dim configs.
+    \item Hypothesis: LLMs should beat greedy on multi-dim configs (where
+      planning and trade-off reasoning matter) even if greedy has perfect
+      local merge scores.
+    \item Metric: max mana, broken down by number of active dimensions.
+    \item \todo{Run matrix: 3+ LLMs $\times$ 8+ configs $\times$ 5 episodes.}
+  \end{itemize}
+  \todo{Table: agent $\times$ config score matrix.}\\
+  \todo{Figure: bar chart grouped by dimension count.}
+}
+
+\subsection{RQ2: What is the vision tax?}
+\plan{%
+  \begin{itemize}
+    \item Run the same LLM in metadata mode and vision mode on identical
+      configs.
+    \item The score difference isolates perceptual grounding cost from
+      strategic reasoning.
+    \item Break down by dimension type: color (requires seeing actual RGB),
+      shape (spatial), number (OCR), word (text reading).
+    \item Hypothesis: vision tax is smallest for number/word (essentially
+      OCR) and largest for color/shape (genuine visual understanding).
+    \item \todo{Run matrix: 2+ VLMs $\times$ same configs $\times$
+      metadata and vision $\times$ 5 episodes.}
+  \end{itemize}
+  \todo{Table: metadata score vs.\ vision score, with delta column.}\\
+  \todo{Figure: paired comparison per config.}
+}
+
+\subsection{RQ3: How does performance scale with model capability?}
+\plan{%
+  \begin{itemize}
+    \item Test models across a capability range: small open-source
+      ($\sim$7B), medium ($\sim$70B), large ($\sim$120B+), frontier
+      (Claude, GPT-4).
+    \item Does Yedi score correlate with general benchmarks (MMLU, HumanEval)?
+      Or does it measure something orthogonal?
+    \item Hypothesis: multi-dim configs should differentiate models more
+      than single-dim configs (harder task = more headroom).
+    \item \todo{Run matrix: 5+ models $\times$ easy/medium/hard configs
+      $\times$ 5 episodes.}
+  \end{itemize}
+  \todo{Figure: scaling curve (model capability vs.\ Yedi score).}\\
+  \todo{Scatter: Yedi score vs.\ MMLU / HumanEval.}
+}
+
+\subsection{Ablation: Merge Previews}
+\plan{%
+  \begin{itemize}
+    \item With previews: agent receives pre-computed merge quality scores.
+      Tests pure planning (``given that you know the quality of every
+      possible merge, can you pick the right sequence?'').
+    \item Without previews: agent must compute merge quality from card
+      attributes and game rules. Tests evaluation + planning.
+    \item Delta measures the ``evaluation bottleneck'' --- how much
+      performance is lost because the model can't accurately score merges.
+    \item \todo{Run same model with and without previews on same configs.}
+  \end{itemize}
+}
+
+
+% ======================================================================
+\section{Analysis}
+\label{sec:analysis}
+
+\plan{%
+  Deeper dives beyond the headline numbers.
+}
+
+\subsection{Merge Quality Distribution}
+\plan{%
+  \begin{itemize}
+    \item For each agent, plot the distribution of merge tiers chosen
+      (PERFECT, GREAT, GOOD, BAD).
+    \item Do LLMs make fewer BAD merges than greedy? (Greedy has perfect
+      local info but no planning; LLMs might avoid traps greedy walks into.)
+    \item Mana trajectory plots: how does mana evolve over the 100-step
+      episode for each agent type?
+  \end{itemize}
+  \todo{Figure: merge tier histograms per agent.}\\
+  \todo{Figure: mana trajectory curves (mean $\pm$ std).}
+}
+
+\subsection{Failure Modes}
+\plan{%
+  \begin{itemize}
+    \item Qualitative analysis of LLM mistakes from trace logs.
+    \item Common failure patterns: single-slot fixation, forgetting to sell,
+      bad-merge spam, ignoring one dimension.
+    \item Do different models exhibit different failure modes?
+    \item \todo{Pull concrete examples from trace.jsonl files.}
+  \end{itemize}
+}
+
+\subsection{Dimension-Specific Performance}
+\plan{%
+  \begin{itemize}
+    \item Per-dimension merge quality breakdown: is the model better at
+      number reasoning than color reasoning?
+    \item Radar chart: one axis per dimension, comparing agents.
+    \item Which dimension is the bottleneck for each model?
+  \end{itemize}
+  \todo{Figure: radar chart comparing agents across dimensions.}
+}
+
+
+% ======================================================================
+\section{Limitations}
+\label{sec:limitations}
+
+\plan{%
+  Be upfront. Reviewers will find these anyway.
+  \begin{itemize}
+    \item \textbf{Visual complexity}: the game UI is clean and structured.
+      Vision mode tests ``can you read a game board'' more than ``can you
+      understand a complex visual scene.'' The vision tax may underestimate
+      VLM limitations on messier real-world visual reasoning.
+    \item \textbf{Game-specific knowledge}: models that have encountered
+      Yedi-like rules in training data may have an advantage. We mitigate
+      this with the diversity of mode combinations and the novelty of the
+      specific merge mechanics, but cannot fully rule it out.
+    \item \textbf{Bridge fragility}: the WebSocket bridge to Unity WebGL
+      introduces engineering complexity and occasional disconnections.
+      Episode-level error recovery is implemented but adds noise.
+    \item \textbf{Evaluation cost}: each LLM episode requires $\sim$100
+      API calls. Large-scale evaluation across many models and configs is
+      expensive. We report results with limited episode counts and
+      acknowledge the statistical uncertainty.
+    \item \textbf{Single-player}: Yedi is not adversarial. The benchmark
+      tests optimization against a fixed environment, not adaptation to
+      an opponent. Strategic depth is bounded by the merge mechanics
+      rather than an open-ended opponent.
+    \item \textbf{Action space simplicity}: 37 discrete actions is not a
+      complex action space. The challenge is in state evaluation and
+      planning, not in action selection or motor control.
+  \end{itemize}
+}
+
+
+% ======================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+\plan{%
+  3 paragraphs:
+  \begin{enumerate}
+    \item We presented Yedi, a benchmark for multi-dimensional strategic
+      reasoning. The multiplicative interaction across dimensions means
+      models must optimize the worst-case factor, not the average ---
+      a capability not tested by existing single-axis game benchmarks.
+    \item Key findings: \todo{summarize RQ1--RQ3 results in 2--3 sentences
+      each once experiments are complete.}
+    \item Future work: RL training on Yedi, the 3 remaining dimensions
+      (Music, Memory, Motor), multi-player/adversarial variants,
+      curriculum learning across the difficulty ladder.
+  \end{enumerate}
+}
+
+
+% ======================================================================
+% Optional: Appendix
+% ======================================================================
+\appendix
+
+\section{Full Configuration Table}
+\plan{%
+  Complete list of all 40+ benchmark configurations with active dimensions,
+  sub-modes, and difficulty tier.
+}
+
+\section{Prompt Templates}
+\plan{%
+  The system prompt and per-turn user message templates used for LLM/VLM
+  agents. Included for reproducibility.
+}
+
+\section{Per-Dimension Merge Rules}
+\plan{%
+  Detailed scoring tables for each dimension and sub-mode. Reference for
+  readers who want to understand exactly how each multiplier tier is
+  determined.
+}
+
+
+% ======================================================================
+\bibliographystyle{plainnat}
+\bibliography{references}
+\plan{%
+  \todo{Create references.bib with citations for:
+    GamingAgent, V-MAGE, Cradle, WebArena, VisualWebArena,
+    Unity ML-Agents, Gymnasium/Farama, ARC, BIG-bench,
+    MORL survey, Fitts' Law, CHC cognitive theory,
+    Claude/GPT-4 technical reports, MineRL, NetHack LE.}
+}
+
+\end{document}

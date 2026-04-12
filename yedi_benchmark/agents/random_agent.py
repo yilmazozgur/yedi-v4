@@ -17,5 +17,5 @@ class RandomAgent(BaseAgent):
             valid = np.where(np.array(mask) > 0)[0]
             if len(valid) > 0:
                 return int(self.rng.choice(valid))
-        # Fallback: WAIT
-        return 37
+        # Fallback: DRAW
+        return 0

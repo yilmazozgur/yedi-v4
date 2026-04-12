@@ -19,7 +19,7 @@ class BaseAgent(ABC):
             info: Additional info dict from env.step() or env.reset()
 
         Returns:
-            Action index (0-37)
+            Action index (0-36)
         """
         ...
 

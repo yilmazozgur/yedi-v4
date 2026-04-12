@@ -17,7 +17,6 @@ import pytest
 
 from yedi_benchmark.agents.greedy_agent import (
     ACTION_DRAW,
-    ACTION_WAIT,
     GreedyAgent,
     _min_active_gain,
     _move_action,
@@ -314,16 +313,15 @@ class TestGreedyAgentDecisions:
         )
         assert action == _move_action(0, 2)
 
-    def test_fallback_to_wait_when_only_wait_is_valid(self):
-        # New is empty but DRAW isn't in the mask — and WAIT is the only
-        # valid action. Greedy must fall through to step 4 and pick WAIT
-        # rather than crashing or returning an invalid action.
+    def test_fallback_to_draw_when_only_draw_is_valid(self):
+        # New is empty but the mask only contains DRAW. Greedy must fall
+        # through to step 4 and pick DRAW rather than crashing.
         slots = [_slot(False)] * 7
         agent = GreedyAgent()
         action = agent.act(
-            _empty_obs(), _info(slots, valid_actions=[ACTION_WAIT]),
+            _empty_obs(), _info(slots, valid_actions=[ACTION_DRAW]),
         )
-        assert action == ACTION_WAIT
+        assert action == ACTION_DRAW
 
     def test_min_across_active_dims_only(self):
         # color_gain is -1, but color is NOT active → it must NOT influence

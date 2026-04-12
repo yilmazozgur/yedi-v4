@@ -99,6 +99,9 @@ public class WordCard : CardTypeBase
         if (activated)
         {
             wordSelected = wordList[randomIndex];
+            // Guard: remove any stale empty-string entries that can appear
+            // due to WebGL frame-timing during card initialization.
+            wordSelectedList.RemoveAll(s => string.IsNullOrEmpty(s));
             if (!wordSelectedList.Contains(wordSelected))
             {
                 wordSelectedList.Add(wordSelected);
@@ -204,7 +207,7 @@ public class WordCard : CardTypeBase
             {
                 return 2f;
             }
-            else if (multiplierWord >= 1 && multiplierWord < manaIncreaseMultiplier2)
+            else if (multiplierWord > 1 && multiplierWord < manaIncreaseMultiplier2)
             {
                 return 1f;
             }
@@ -343,6 +346,10 @@ public class WordCard : CardTypeBase
 
             }
 
+            // After removing matched words, promote to nihil if the list
+            // is empty or contains only empty-string ghosts left over from
+            // a WebGL initialisation race.
+            wordSelectedList.RemoveAll(s => string.IsNullOrEmpty(s));
             if (wordRemoved && wordSelectedList.Count == 0)
             {
                 wordSelectedList.Add(nihilWord);

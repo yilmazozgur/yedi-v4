@@ -101,7 +101,7 @@ class _ScriptedEnv:
 
     @staticmethod
     def _obs():
-        return {"action_mask": np.ones(38, dtype=np.int8)}
+        return {"action_mask": np.ones(37, dtype=np.int8)}
 
     @staticmethod
     def _info():

@@ -185,6 +185,8 @@ def run_episode(
     diag_sell_by_merges = {}   # {merges_done: count} of sells
     diag_previews_available = 0  # turns where previews existed
     diag_previews_followed = 0   # turns where chosen action matched a preview
+    diag_mana_trajectory = []    # mana value after each step
+    diag_merge_details = []      # per-merge dimension gains
     prev_raw_state = info.get("raw_state", {})
 
     # Active dimensions for this config — needed to filter merge preview
@@ -219,6 +221,10 @@ def run_episode(
 
         # ---- Diagnostic tracking ----
         raw = info.get("raw_state", {})
+        # Mana trajectory
+        step_mana = raw.get("mana", 0)
+        if isinstance(step_mana, (int, float)):
+            diag_mana_trajectory.append(float(step_mana))
         # Wasted draw: action was draw but new slot is still empty
         if action == 0:
             slots = raw.get("slots") or []
@@ -250,12 +256,21 @@ def run_episode(
                              0: "neutral", -1: "BAD"}
                 for p in previews:
                     if p.get("action") == action:
-                        gains = [int(p[field]) for field in _active_dims
-                                 if p.get(field) is not None]
+                        dim_gains = {}
+                        for field in _active_dims:
+                            if p.get(field) is not None:
+                                dim_gains[field] = int(p[field])
+                        gains = list(dim_gains.values())
                         if gains:
                             min_gain = min(gains)
                             tier_name = _tier_map.get(min_gain, f"tier{min_gain}")
                             diag_merge_tiers[tier_name] = diag_merge_tiers.get(tier_name, 0) + 1
+                            diag_merge_details.append({
+                                "step": step,
+                                "action": action,
+                                "tier": tier_name,
+                                "dim_gains": dim_gains,
+                            })
                         break
         prev_raw_state = raw
 
@@ -271,6 +286,7 @@ def run_episode(
                 truncated=truncated,
                 info=info,
                 fallback_reason=fallback_reason,
+                raw_state=raw,
             )
             # Log screenshots at key moments
             screenshot = info.get("screenshot")
@@ -295,7 +311,10 @@ def run_episode(
             "sell_by_merges": diag_sell_by_merges,
             "previews_available": diag_previews_available,
             "previews_followed": diag_previews_followed,
+            "mana_trajectory": diag_mana_trajectory,
+            "merge_details": diag_merge_details,
         },
+        "episode_log_path": str(replay_logger.episode_dir) if replay_logger and replay_logger.episode_dir else None,
     }
 
 
@@ -645,6 +664,7 @@ def run_benchmark_with_registry(
                             started_at=ep_started,
                             finished_at=_now_iso(),
                             diagnostics=result.get("diagnostics"),
+                            episode_log_path=result.get("episode_log_path"),
                         ),
                     )
                     consecutive_bridge_failures = 0

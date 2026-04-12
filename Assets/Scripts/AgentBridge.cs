@@ -1281,9 +1281,6 @@ public class AgentBridge : MonoBehaviour
                 valid.Add(31 + srcIdx);
         }
 
-        // Action 37: WAIT
-        valid.Add(37);
-
         return valid.ToArray();
     }
 

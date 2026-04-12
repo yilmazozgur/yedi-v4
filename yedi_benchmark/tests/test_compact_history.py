@@ -72,7 +72,7 @@ def _empty_slot():
 
 
 def _make_obs():
-    return {"action_mask": np.ones(38, dtype=np.int8)}
+    return {"action_mask": np.ones(37, dtype=np.int8)}
 
 
 def _make_info(*, mana: float = 200, slots=None):
@@ -83,7 +83,7 @@ def _make_info(*, mana: float = 200, slots=None):
             "action_count": 0,
             "max_steps": 100,
             "slots": slots if slots is not None else [],
-            "valid_actions": [0, 37],
+            "valid_actions": [0],
         }
     }
 
@@ -191,7 +191,6 @@ class TestCompactSlotsRow:
 class TestAnnotateAction:
     @pytest.mark.parametrize("action,expected", [
         (0,  "a0:draw"),
-        (37, "a37:wait"),
         (1,  "a1:new>s1"),    # src=new, dst=s1
         (5,  "a5:new>s5"),    # src=new, dst=s5
         (6,  "a6:s1>s1"),     # src=s1, dst=s1 (illegal in practice; encoder is lossless)
@@ -251,7 +250,6 @@ class TestHistoryLegend:
         assert "HISTORY FORMAT" in out
         # Documents the action annotation alphabet
         assert "a0:draw" in out
-        assert "a37:wait" in out
         assert "sell(src)" in out
         # Documents slot cell format
         assert "[new|s1|s2|s3|s4|s5]" in out
@@ -359,7 +357,7 @@ class TestCompactLLMAgent:
                 raise RuntimeError("network down")
 
         prov = BoomProvider()
-        mask = np.zeros(38, dtype=np.int8)
+        mask = np.zeros(37, dtype=np.int8)
         mask[3] = 1
         agent = LLMAgent(provider=prov, prompt=get_default_prompt(), mode="compact")
         action = agent.act({"action_mask": mask}, _make_info(mana=200))
@@ -380,7 +378,7 @@ class TestCompactLLMAgent:
                 raise RuntimeError("network down")
 
         prov = BoomProvider()
-        mask = np.zeros(38, dtype=np.int8)
+        mask = np.zeros(37, dtype=np.int8)
         mask[3] = 1
         agent = LLMAgent(provider=prov, prompt=get_default_prompt(), mode="compact")
         agent.act({"action_mask": mask}, _make_info(mana=200))
@@ -392,7 +390,7 @@ class TestCompactLLMAgent:
         """A good act() call must clear any previous fallback marker so the
         runner doesn't mistake a success for a stale error."""
         prov = StubProvider(reply="0")
-        mask = np.zeros(38, dtype=np.int8)
+        mask = np.zeros(37, dtype=np.int8)
         mask[0] = 1
         agent = LLMAgent(provider=prov, prompt=get_default_prompt(), mode="compact")
         # Pre-seed a stale marker

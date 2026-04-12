@@ -298,7 +298,7 @@ def _fresh_state(**overrides):
         "type": "state", "mana": 200, "mana_max": 200,
         "action_count": 0, "max_steps": 100,
         "slots": [{"occupied": False} for _ in range(7)],
-        "valid_actions": [0, 37], "seq": 1,
+        "valid_actions": [0], "seq": 1,
     }
     base.update(overrides)
     return base
@@ -449,7 +449,7 @@ class TestIsBrokenLoadingState:
         """Mana legitimately can hit 0 mid-game; that ALONE must not
         trigger the bail-out. Only the full sentinel (no slots, no
         valid_actions, action_count=None) qualifies."""
-        s = self._blank(action_count=80, valid_actions=[37])
+        s = self._blank(action_count=80, valid_actions=[0])
         assert YediEnv._is_broken_loading_state(s) is False
 
     def test_action_count_zero_int_is_not_broken(self):
@@ -466,7 +466,7 @@ class TestIsBrokenLoadingState:
         assert YediEnv._is_broken_loading_state(s) is False
 
     def test_valid_actions_present_disqualifies_sentinel(self):
-        s = self._blank(valid_actions=[0, 37])
+        s = self._blank(valid_actions=[0])
         assert YediEnv._is_broken_loading_state(s) is False
 
 
@@ -506,7 +506,7 @@ class TestStepRaisesOnBrokenState:
             "type": "state", "mana": 190, "mana_max": 200,
             "action_count": 1, "max_steps": 100,
             "slots": [{"occupied": False} for _ in range(7)],
-            "valid_actions": [0, 37], "game_over": False,
+            "valid_actions": [0], "game_over": False,
             "timer_remaining": 10.0, "beat_phase": 0.0,
         }
         env = self._make_env(normal, monkeypatch)
@@ -521,11 +521,11 @@ class TestStepRaisesOnBrokenState:
             "type": "state", "mana": 0, "mana_max": 200,
             "action_count": 99, "max_steps": 100,
             "slots": [{"occupied": False} for _ in range(7)],
-            "valid_actions": [37], "game_over": True,
+            "valid_actions": [], "game_over": True,
             "timer_remaining": 0.0, "beat_phase": 0.0,
         }
         env = self._make_env(near_loss, monkeypatch)
-        obs, reward, term, trunc, info = env.step(37)
+        obs, reward, term, trunc, info = env.step(0)
         assert term is True
 
 
@@ -902,7 +902,7 @@ class TestYediEnvResetCommand:
                 "action_count": 0, "max_steps": 100,
                 "timer_remaining": 0.0, "beat_phase": 0.0,
                 "slots": [{"occupied": False} for _ in range(7)],
-                "valid_actions": [0, 37], "seq": 1,
+                "valid_actions": [0], "seq": 1,
             }
 
         monkeypatch.setattr(env, "_send_command", fake_send)

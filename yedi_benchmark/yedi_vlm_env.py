@@ -173,8 +173,6 @@ class YediVLMEnv(YediEnv):
     def _describe_action(action: int) -> str:
         if action == 0:
             return "Draw a new card"
-        elif action == 37:
-            return "Wait (do nothing)"
         elif 1 <= action <= 30:
             idx = action - 1
             src_idx = idx // 5

@@ -4,18 +4,17 @@ Yedi Gymnasium Environment.
 Connects to the Yedi game running in a browser via WebSocket through gym_server.py.
 Supports both metadata-only (RL) and visual (VLM) observation modes.
 
-Action Space (Discrete(38)):
+Action Space (Discrete(37)):
     0:      DRAW_CARD
     1-30:   MOVE(src, dst) — src in {new,1-5}, dst in {1-5}
             action = 1 + src_idx * 5 + (dst_idx - 1)
     31-36:  SELL(src) — src in {new,1-5}
             action = 31 + src_idx
-    37:     WAIT (no-op, relevant for beat timing)
 
 Observation Space (Dict):
     mana, mana_max, timer_remaining, beat_phase: Box scalars
     slots: Box(7, 11) — per-slot card features
-    valid_actions: MultiBinary(38) — action mask
+    valid_actions: MultiBinary(37) — action mask
 """
 
 import asyncio
@@ -51,11 +50,10 @@ class BridgeDisconnectedError(RuntimeError):
     """
 
 # Action space constants
-NUM_ACTIONS = 38
+NUM_ACTIONS = 37
 ACTION_DRAW = 0
 ACTION_MOVE_BASE = 1  # 1..30
 ACTION_SELL_BASE = 31  # 31..36
-ACTION_WAIT = 37
 
 # Slot names for indexing
 SLOT_NAMES = ["new", "1", "2", "3", "4", "5"]
@@ -65,8 +63,6 @@ def action_to_command(action: int) -> dict:
     """Convert a discrete action index to a game command dict."""
     if action == ACTION_DRAW:
         return {"type": "draw_card"}
-    elif action == ACTION_WAIT:
-        return {"type": "get_state"}  # WAIT = just get state, no action
     elif ACTION_MOVE_BASE <= action <= 30:
         idx = action - ACTION_MOVE_BASE
         src_idx = idx // 5
@@ -100,8 +96,6 @@ def command_to_action(cmd: dict) -> int:
         src = cmd["source"]
         src_idx = SLOT_NAMES.index(src)
         return ACTION_SELL_BASE + src_idx
-    elif t == "get_state":
-        return ACTION_WAIT
     else:
         raise ValueError(f"Unknown command type: {t}")
 
@@ -159,7 +153,16 @@ class YediEnv(gym.Env):
             return
         self._loop = asyncio.new_event_loop()
         self._ws = self._loop.run_until_complete(
-            websockets.connect(self.server_url, max_size=10 * 1024 * 1024)
+            websockets.connect(
+                self.server_url,
+                max_size=10 * 1024 * 1024,
+                # Disable client-side keepalive pings. The LLM agent blocks
+                # the event loop for 10-60s during API calls; the default 20s
+                # ping_timeout kills the connection while the agent is thinking.
+                # The server-side heartbeat (gym_server.py) already handles
+                # liveness detection for the game bridge.
+                ping_interval=None,
+            )
         )
         logger.info(f"Connected to {self.server_url}")
 
@@ -292,7 +295,7 @@ class YediEnv(gym.Env):
 
         In run_1ffefc335187 every zero-score episode followed this exact
         pattern after step 0: 200 consecutive blank frames burned through
-        with a=37 fallbacks because the env had no way to tell the bridge
+        with a=0 fallbacks because the env had no way to tell the bridge
         was lost. Detecting it lets step() raise BridgeDisconnectedError
         so the runner's recovery path (recreate env, retry) kicks in
         instead of grinding through wasted LLM calls.
@@ -531,7 +534,7 @@ class YediEnv(gym.Env):
                 if 0 <= a < NUM_ACTIONS:
                     mask[a] = 1
         else:
-            mask[ACTION_WAIT] = 1  # WAIT is always valid
+            mask[ACTION_DRAW] = 1  # fallback: draw is usually valid
         return mask
 
     # ------------------------------------------------------------------

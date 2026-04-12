@@ -106,8 +106,8 @@ Respond with ONLY the action number. Nothing else."""
 
         except Exception as e:
             logger.error(f"Claude API error: {e}")
-            # Fallback to WAIT
-            return 37
+            # Fallback to DRAW
+            return 0
 
     def _parse_action(self, text: str, observation: dict) -> int:
         """Extract action number from Claude's response."""
@@ -126,7 +126,7 @@ Respond with ONLY the action number. Nothing else."""
             valid = np.where(np.array(mask) > 0)[0]
             if len(valid) > 0:
                 return int(valid[0])
-        return 37  # WAIT
+        return 0  # DRAW
 
     @staticmethod
     def _encode_screenshot(screenshot: np.ndarray) -> str:

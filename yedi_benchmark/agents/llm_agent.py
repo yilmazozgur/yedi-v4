@@ -69,14 +69,13 @@ Slots: [new] [1] [2] [3] [4] [5]  — "new" is the draw landing spot, 1..5 are
 build slots. "new" must be EMPTY before you can draw again. The "sell" action
 destroys a card and returns its card_mana to your bank (it is not a slot).
 
-You output ONE integer 0..37 per turn:
+You output ONE integer 0..36 per turn:
    0         DRAW a new card into "new"  (cost ~10 × active_dims mana)
    1..30     MOVE src → dst — formula: 1 + src_idx*5 + (dst_idx - 1)
                src_idx: 0=new, 1..5=build slots ;  dst_idx: 1..5
                If dst is OCCUPIED → it MERGES. If dst is EMPTY → it just places.
                Examples: new→1=1, new→5=5, 1→2=7, 3→4=19, 5→1=26
    31..36    SELL — 31=sell new, 32..36=sell slots 1..5
-   37        WAIT (no-op; almost never useful)
 
 Each turn's user message includes a "Valid actions:" list. Pick ONLY from that
 list — the action mask rejects anything else.
@@ -125,12 +124,21 @@ Every dimension has a NEUTRAL identity card:
 
    math:add      → value 0           color:add/gray → White
    math:multiply → value 1           color:subtract → Black
-   math:gcd      → value 1           shape:*        → blank (idx 8 or 16)
+   math:gcd      → value 1           color:text     → White (ink)
 
-(Word/memory/etc. — see each dimension's own section below.)
+   shape:triangle/rectangle/kanizsa/triple → index 7 (empty-set symbol)
+   shape:hanoi   → index 9 (solved state)
+   shape:sphere  → index 0 (neutral angle)
+
+   word:* (except scrabble) → "nihil" (all word-pairs cancelled)
+
+NOTE: shape identity ≠ blank/reset. Index 8 (or 10/16) is the BLANK that
+resets a slot for free (1.0×). Index 7 (or 0/9) is the TRUE IDENTITY that
+gives 2.5× PERFECT when paired with another identity.
 
 Neutral cards rarely spawn from a vanilla draw. The usual path to one is a
-GREAT merge that RESOLVES to neutral (3+(-3)=0, Yellow+Cyan=White). Once you
+GREAT merge that RESOLVES to neutral (3+(-3)=0, Yellow+Cyan=White,
+appear+vanish→nihil, opposite shapes→identity). Once you
 hold two neutrals AT THE SAME TIME in DIFFERENT slots, pairing them gives
 the 2.5× PERFECT jackpot. This is why you must build multiple slots in
 parallel — you cannot pair two neutrals if you only use slot 1.
@@ -378,114 +386,180 @@ is the classic Stroop conflict.\
     # =================================================================
     ("shape", "triangle"): """\
 ==== SPATIAL — TRIANGLE MODE ====
-Cards show triangles in 8 orientations (index 0-7, rotating 45° per step),
-plus index 8 = blank/identity. Shown as "Shape=N".
+Cards show triangles in 8 orientations (index 0-7, rotating 45° per step).
+Two special indices: 7 = identity (empty-set symbol), 8 = blank/reset.
+Shown as "Shape=N".
 
 SCORING:
-  Both blank (8)                         → 2.5x PERFECT
+  Both identity (7)                      → 2.5x PERFECT
   Opposite (idx differ by 4)             → 2.0x GREAT — 0+4, 1+5, 2+6, 3+7
+                                           (slot becomes identity 7 after merge)
   Perpendicular (idx differ by 2 or 6)   → 1.5x GOOD
   Adjacent orientations                  → 1.0x neutral
   Same orientation                       → 0.9x BAD
-  Blank slot + non-blank                 → 0.9x BAD (wasted identity)
-  Non-blank slot + blank                 → resets slot to blank (free fix)
+  Identity(7) slot + non-identity        → 0.9x BAD (wasted identity)
+  Non-identity slot + blank(8)           → resets slot to blank (1.0x, free fix)
 
-STRATEGY: pair OPPOSITES (4 apart) for ×2.0; hold blanks for ×2.5.\
+Identity 7 never spawns from a draw. The path to it: merge OPPOSITES (4
+apart) for ×2.0 GREAT — the slot becomes identity 7. Then pair two
+identity-7 cards for ×2.5 PERFECT.
+
+STRATEGY: pair OPPOSITES (4 apart) for ×2.0 → creates identity 7 →
+hold identity-7 cards for ×2.5 PERFECT pairings.\
 """,
     ("shape", "rectangle"): """\
 ==== SPATIAL — RECTANGLE MODE ====
-Rectangles in 8 orientations (0-7), index 8 = blank. Same scoring and
-strategy as Triangle mode — pair orientations 4 apart for ×2.0, hold
-blanks for ×2.5.\
+Rectangles in 8 orientations (0-7). Identity = index 7 (empty-set symbol),
+blank/reset = index 8. Same scoring as Triangle mode — pair orientations
+4 apart for ×2.0 GREAT (slot becomes identity 7), then pair identity-7
+cards for ×2.5 PERFECT.\
 """,
     ("shape", "kanizsa"): """\
 ==== SPATIAL — KANIZSA MODE ====
-Cards show Kanizsa illusory-contour patterns in 8 orientations (0-7),
-index 8 = blank. Key VLM test: the contour must be PERCEIVED from the
-pacman-cutout inducers, not just counted.
+Cards show Kanizsa illusory-contour patterns in 8 orientations (0-7).
+Identity = index 7 (empty-set symbol), blank/reset = index 8. Key VLM
+test: the contour must be PERCEIVED from the pacman-cutout inducers.
 
-Merge scoring and strategy are identical to Triangle mode — pair
-orientations 4 apart for ×2.0, hold blanks for ×2.5. In metadata mode
-you see Shape=N directly.\
+Merge scoring identical to Triangle mode — pair orientations 4 apart
+for ×2.0 GREAT (slot → identity 7), then pair identity-7 cards for
+×2.5 PERFECT. In metadata mode you see Shape=N directly.\
 """,
     ("shape", "hanoi"): """\
 ==== SPATIAL — HANOI MODE ====
-Cards represent Tower of Hanoi disc states (index 0-15), index 16 = blank.
-One of the hardest modes — merges represent Hanoi moves. Valid moves score
-well, invalid ones don't.
+Cards represent Tower of Hanoi disc states (index 0-15). Identity = index 9
+(solved state), blank/reset = index 16. One of the hardest modes — merges
+represent Hanoi moves. Valid moves score well, invalid ones don't.
 
-STRATEGY: focus on safe wins (blank+blank ×2.5); sell cards whose optimal
-move is unclear rather than gamble a bad merge.\
+SCORING:
+  Both identity (9)                      → 2.5x PERFECT
+  Valid Hanoi move                       → 2.0x GREAT (slot → identity 9)
+  Identity(9) slot + non-identity        → 0.9x BAD (wasted identity)
+  Non-identity slot + blank(16)          → resets slot (1.0x, free fix)
+
+STRATEGY: pair valid Hanoi moves for ×2.0 → creates identity 9 → then
+pair identity-9 cards for ×2.5 PERFECT. Sell unclear cards rather than
+gamble a bad merge.\
 """,
     ("shape", "triple"): """\
 ==== SPATIAL — TRIPLE MODE ====
-Cards show three overlapping shapes; merges combine them into recognisable
-figures when the patterns align. HOLD blanks for safe ×2.5; sell unclear cards early.\
+Cards show three overlapping shapes in 8 orientations (0-7). Identity =
+index 7 (empty-set symbol), blank/reset = index 8. Merges combine
+patterns — opposite orientations (4 apart) give ×2.0 GREAT and produce
+identity 7. Same scoring as Triangle mode.
+
+STRATEGY: pair opposites (4 apart) for ×2.0 → identity 7 → pair
+identity-7 cards for ×2.5 PERFECT. Sell unclear cards early.\
 """,
     ("shape", "sphere"): """\
 ==== SPATIAL — SPHERE MODE ====
-Cards show 3D sphere positions. Opposing/symmetric positions merge best;
-adjacent ones don't. HOLD blanks for ×2.5.\
+Cards show 3D sphere angle positions. Identity = index 0 (neutral angle),
+blank/reset = index 10. Opposing/symmetric positions merge best.
+
+SCORING:
+  Both identity (0)                      → 2.5x PERFECT
+  Opposing position                      → 2.0x GREAT (slot → identity 0)
+  Identity(0) slot + non-identity        → 0.9x BAD (wasted identity)
+  Non-identity slot + blank(10)          → resets slot (1.0x, free fix)
+
+STRATEGY: pair opposing positions for ×2.0 → identity 0 → pair
+identity-0 cards for ×2.5 PERFECT.\
 """,
     # =================================================================
     # VERBAL (word)
     # =================================================================
     ("word", "verbs"): """\
 ==== VERBAL — VERBS MODE ====
-Cards show one or more verbs (e.g. "run", "throw"), as "Word=[verb]".
-Merge scoring uses a built-in list of RELATED verb pairs.
+Cards show 1-2 verbs from a FIXED list of 7 ANTONYM pairs, as "Word=[verb]".
+IDENTITY = "nihil" (shown when all words have been cancelled).
+
+THE 7 PAIRS (memorise these — they are the ONLY words in the game):
+  appear↔vanish, contract↔expand, fail↔succeed, help↔hinder,
+  separate↔join, build↔destroy, conceal↔reveal
+
+HOW WORD CARDS WORK:
+  - Each card holds a LIST of 1-2 words (shown stacked on the card).
+  - Merging checks each incoming word against the target card's list:
+      • ANTONYM PAIR found → the matched word is REMOVED from the target,
+        ×2.0 GREAT per pair removed.
+      • IDENTICAL word → ×0.9 BAD (duplicate penalty).
+      • NO MATCH → incoming word is ADDED to the target's list (max 2).
+  - When ALL words are removed from a card → "nihil" is added (identity).
 
 SCORING:
-  All words match as pairs           → 2.0-2.5x GREAT
-  Some pair matches                  → 1.5x GOOD
-  No relationship                    → 1.0x neutral
-  Identical words                    → 0.9x BAD (duplicates penalised)
+  nihil + nihil                      → 2.5x PERFECT
+  1 antonym pair matched             → 2.0x GREAT (matched word removed)
+  2 antonym pairs matched            → 2.5x+ PERFECT (2.0×2.0)
+  No match (word added to list)      → 1.0x neutral
+  Identical word                     → 0.9x BAD
+  nihil slot + non-nihil new         → 0.9x BAD (wasted identity)
+  non-nihil slot + nihil new         → slot becomes nihil (1.0x, free fix)
 
 STRATEGY:
-  - Merge RELATED but DIFFERENT verbs: "run"+"sprint", "walk"+"stroll",
-    "throw"+"catch", "give"+"take", "buy"+"sell", "eat"+"chew".
-  - Never merge identical words.
-  - You won't know every pairing — remember what scored well.\
+  - Merge ANTONYM pairs to cancel words: appear→vanish, fail→succeed, etc.
+  - The goal is to reach "nihil" (all words cancelled), then pair nihils
+    for ×2.5 PERFECT — same pattern as reaching 0 in math:add.
+  - HOLD nihil cards for ×2.5 pairings. Never merge non-nihil into nihil.
+  - If no antonym match exists, PLACE into an empty slot or SELL.\
 """,
     ("word", "nouns"): """\
 ==== VERBAL — NOUNS MODE ====
-Same mechanics as verbs mode, with nouns. Merge RELATED pairs:
-"dog"+"bone", "table"+"chair", "key"+"lock", "cup"+"saucer",
-"bread"+"butter". Never duplicates.\
+Same mechanics as verbs mode (1-2 word cards, pair removal, nihil identity).
+7 ANTONYM NOUN PAIRS:
+  despair↔hope, past↔present, poverty↔wealth, success↔failure,
+  virtue↔vice, war↔peace, bless↔curse
+
+Merge antonym pairs to cancel words → reach nihil → pair nihils for ×2.5.\
 """,
     ("word", "adjectives"): """\
 ==== VERBAL — ADJECTIVES MODE ====
-Same mechanics as verbs mode. Related adjective pairs (often opposites):
-"hot"+"cold", "big"+"small", "fast"+"slow", "happy"+"sad". Never duplicates.\
+Same mechanics as verbs mode (1-2 word cards, pair removal, nihil identity).
+7 ANTONYM ADJECTIVE PAIRS:
+  empty↔full, messy↔neat, boring↔fun, young↔old,
+  private↔public, quiet↔loud, sweet↔sour
+
+Merge antonym pairs to cancel words → reach nihil → pair nihils for ×2.5.\
 """,
     ("word", "synVerbs"): """\
 ==== VERBAL — SYNONYM VERBS MODE ====
-Like verbs mode, but matching is by SYNONYM (same meaning, different word).
+Same mechanics as verbs mode (1-2 word cards, pair removal, nihil identity),
+but pairs are SYNONYMS instead of antonyms.
+7 SYNONYM VERB PAIRS:
+  choose↔select, close↔shut, refuse↔reject, collect↔gather,
+  defend↔protect, forbid↔ban, begin↔start
 
-SCORING:
-  Synonym pair                  → 2.0-2.5x GREAT
-  Unrelated                     → 1.0x neutral
-  Identical word                → 0.9x BAD (must differ in form)
-
-STRATEGY: "same meaning, different word" — "run"+"sprint", "begin"+"start",
-"build"+"construct", "finish"+"complete", "eat"+"consume".\
+Merge synonym pairs to cancel words → reach nihil → pair nihils for ×2.5.\
 """,
     ("word", "synAdjectives"): """\
 ==== VERBAL — SYNONYM ADJECTIVES MODE ====
-Same as synVerbs with adjectives: "big"+"large", "fast"+"quick",
-"happy"+"glad", "smart"+"clever", "tired"+"exhausted". Never duplicates.\
+Same mechanics as verbs mode (1-2 word cards, pair removal, nihil identity),
+but pairs are SYNONYMS.
+7 SYNONYM ADJECTIVE PAIRS:
+  happy↔amused, little↔tiny, good↔terrific, bad↔awful,
+  pretty↔handsome, angry↔annoyed, mad↔crazy
+
+Merge synonym pairs to cancel words → reach nihil → pair nihils for ×2.5.\
 """,
     ("word", "grammar"): """\
 ==== VERBAL — GRAMMAR MODE ====
-Cards are sentence fragments; merges concatenate them into longer phrases.
-Grammatically VALID combinations score well, invalid ones don't.
+Same mechanics as verbs mode (1-2 word cards, pair removal, nihil identity),
+but pairs are GRAMMATICAL CONSTRUCTIONS that belong together.
+7 GRAMMAR PAIRS:
+  I↔am, you↔are, she↔is, to↔be,
+  either↔or, neither↔nor, not only↔but also
 
-STRATEGY: treat each card as subject/verb/object/modifier and merge in an
-order that builds a real sentence (subject+verb, verb+object, adj+noun).\
+Merge paired grammar words to cancel them → reach nihil → pair nihils
+for ×2.5. Note: "not only" and "but also" are multi-word tokens.\
 """,
     ("word", "questions"): """\
 ==== VERBAL — QUESTIONS MODE ====
-Cards are question fragments; merge question + matching answer pattern.\
+Same mechanics as verbs mode (1-2 word cards, pair removal, nihil identity),
+but pairs are QUESTION WORDS matched with their ANSWER WORDS.
+7 QUESTION-ANSWER PAIRS:
+  what↔this, where↔here, when↔now, why↔because,
+  who↔she, whom↔her, how often↔rarely
+
+Merge question↔answer pairs to cancel them → reach nihil → pair nihils
+for ×2.5. Note: "how often" is a multi-word token.\
 """,
     ("word", "scrabble"): """\
 ==== VERBAL — SCRABBLE MODE ====
@@ -878,9 +952,11 @@ def describe_state(
             if shape_idx >= 0:
                 attrs.append(f"Shape={shape_idx}")
 
-        # Word
+        # Word — filter empty-string ghosts that can appear due to a
+        # WebGL initialisation race (serialised as leading/trailing commas).
         if mode_active["word"]:
-            word_val = slot.get("word_value", "")
+            raw_word = slot.get("word_value", "")
+            word_val = ",".join(w for w in raw_word.split(",") if w)
             if word_val:
                 attrs.append(f"Word=[{word_val}]")
 
@@ -954,8 +1030,6 @@ def _describe_action(action: int) -> str:
     slot_names = ["new", "1", "2", "3", "4", "5"]
     if action == 0:
         return "Draw card"
-    elif action == 37:
-        return "Wait"
     elif 1 <= action <= 30:
         idx = action - 1
         src_idx = idx // 5
@@ -1048,9 +1122,10 @@ def _compact_slot(
             shape_idx = slot.get("shape_index", -1)
             if shape_idx >= 0:
                 parts.append(f"s{shape_idx}")
-        # Word (bracketed)
+        # Word (bracketed) — filter empty-string ghosts
         if legacy or "word" in active_dims:
-            word_val = slot.get("word_value", "")
+            raw_word = slot.get("word_value", "")
+            word_val = ",".join(w for w in raw_word.split(",") if w)
             if word_val:
                 parts.append(f"[{word_val}]")
 
@@ -1089,8 +1164,6 @@ def _annotate_action(action: int) -> str:
     slot_short = ["new", "s1", "s2", "s3", "s4", "s5"]
     if action == 0:
         return "a0:draw"
-    if action == 37:
-        return "a37:wait"
     if 1 <= action <= 30:
         idx = action - 1
         src = idx // 5
@@ -1161,7 +1234,6 @@ Action annotations:
   a0:draw                 spawn a fresh card in "new"
   a1-a30:src>sD           move source slot onto build slot D (merges if D busy)
   a31-a36:sell(src)       destroy the card in `src` and add its mana to total
-  a37:wait                no-op for one step
 
 Use the trail as your scratchpad: it tells you exactly what happened on every
 prior step. The CURRENT STATE block below it is the live, full-fidelity view
@@ -1209,7 +1281,6 @@ Action annotations:
   a0:draw                 spawn a fresh card in "new"
   a1-a30:src>sD           move source slot onto build slot D (merges if D busy)
   a31-a36:sell(src)       destroy the card in `src` and add its mana to total
-  a37:wait                no-op for one step
 
 Use the trail as your action-and-mana scratchpad; use the CURRENT STATE
 screenshot as the authoritative source for what each slot actually holds
@@ -1628,23 +1699,19 @@ class LLMAgent(BaseAgent):
             valid = np.where(np.array(mask) > 0)[0]
             if len(valid) > 0:
                 return int(valid[0])
-        return 37  # WAIT
+        return 0  # DRAW
 
     @staticmethod
     def _fallback_action(observation: dict) -> int:
-        # When the LLM errors or returns nonsense, fall back to WAIT (37).
-        # WAIT is always valid and is strictly inert — it burns one move but
-        # does not destroy cards or spawn new ones. The old fallback returned
-        # valid[0] which was almost always DRAW (action 0), so a crashing LLM
-        # would flood the board with draws and lock itself out of recovery.
+        # When the LLM errors or returns nonsense, fall back to the first
+        # valid action from the mask (usually DRAW). DRAW is almost always
+        # valid and is the least destructive default.
         mask = observation.get("action_mask", None)
-        if mask is not None and len(mask) > 37 and mask[37] > 0:
-            return 37
         if mask is not None:
             valid = np.where(np.array(mask) > 0)[0]
             if len(valid) > 0:
                 return int(valid[0])
-        return 37
+        return 0  # DRAW
 
     @staticmethod
     def _encode_screenshot(screenshot: np.ndarray) -> str:

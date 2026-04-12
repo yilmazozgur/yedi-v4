@@ -103,7 +103,7 @@ class TestTraceLog:
             step_in_episode=0,
             user_text="s1",
             response="",
-            action=37,
+            action=0,
             latency_ms=5.0,
             error="boom",
             fallback_reason="llm_error: boom",

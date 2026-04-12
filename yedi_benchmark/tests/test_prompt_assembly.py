@@ -43,7 +43,7 @@ class StubProvider(LLMProvider):
 
 
 def _make_obs():
-    return {"action_mask": np.ones(38, dtype=np.int8)}
+    return {"action_mask": np.ones(37, dtype=np.int8)}
 
 
 def _make_info():
@@ -55,7 +55,7 @@ def _make_info():
             "max_steps": 100,
             "slots": [],
             "mode_number": "add",
-            "valid_actions": [0, 37],
+            "valid_actions": [0],
         }
     }
 
@@ -147,7 +147,7 @@ class TestDescribeState:
                 {"occupied": True, "card_mana": 9, "merges_done": 0, "number_value": 3, "number_active": True},
                 {"occupied": False},
             ],
-            "valid_actions": [0, 37],
+            "valid_actions": [0],
         })
         assert "Mana: 250" in out
         assert "Best: 300" in out
@@ -330,7 +330,7 @@ class TestDescribeState:
                 },
                 {"occupied": False},
             ],
-            "valid_actions": [0, 37],
+            "valid_actions": [0],
         }
         out = describe_state(raw, hide_perceptual_attrs=True)
         # HUD-level fields must still be present
@@ -369,7 +369,7 @@ class TestDescribeState:
                 {"occupied": True, "card_mana": 9, "merges_done": 0,
                  "number_value": 3, "number_active": True},
             ],
-            "valid_actions": [0, 37],
+            "valid_actions": [0],
         }
         out = describe_state(raw)  # default hide_perceptual_attrs=False
         assert "Num=3" in out
@@ -546,7 +546,7 @@ class TestSellHint:
                 _slot(occupied=False),
                 _slot(occupied=False),
             ],
-            "valid_actions": [0, 32, 37],
+            "valid_actions": [0, 32],
         }
         out = describe_state(raw)
         assert "Sell hint" in out
@@ -559,7 +559,7 @@ class TestSellHint:
             "action_count": 0, "max_steps": 100,
             "mode_number": "add",
             "slots": [_slot(occupied=False) for _ in range(7)],
-            "valid_actions": [0, 37],
+            "valid_actions": [0],
         }
         out = describe_state(raw)
         assert "Sell hint" not in out
@@ -651,7 +651,7 @@ class TestLLMAgent:
 
     def test_parse_action_falls_back_to_mask(self):
         prov = StubProvider(reply="42")  # 42 > action space
-        mask = np.zeros(38, dtype=np.int8)
+        mask = np.zeros(37, dtype=np.int8)
         mask[5] = 1
         agent = LLMAgent(provider=prov, prompt=get_default_prompt(), mode="stateless")
         action = agent.act({"action_mask": mask}, _make_info())
@@ -710,7 +710,7 @@ class TestLLMAgent:
                 raise RuntimeError("network down")
 
         prov = BoomProvider()
-        mask = np.zeros(38, dtype=np.int8)
+        mask = np.zeros(37, dtype=np.int8)
         mask[3] = 1
         agent = LLMAgent(provider=prov, prompt=get_default_prompt(), mode="stateless")
         action = agent.act({"action_mask": mask}, _make_info())
@@ -889,7 +889,7 @@ class TestVisionLeakGuards:
                 "mode_number": "add",
                 "mode_color": "add",
                 "mode_shape": "triangle",
-                "valid_actions": [0, 37],
+                "valid_actions": [0],
             },
             "screenshot": np.zeros((4, 4, 3), dtype=np.uint8),
         }
@@ -936,7 +936,7 @@ class TestVisionLeakGuards:
                 ],
                 "mode_number": "add",
                 "mode_color": "add",
-                "valid_actions": [0, 37],
+                "valid_actions": [0],
             },
             "screenshot": np.zeros((4, 4, 3), dtype=np.uint8),
         }

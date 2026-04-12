@@ -72,6 +72,7 @@ class ReplayLogger:
         truncated: bool,
         info: dict = None,
         fallback_reason: str = None,
+        raw_state: dict = None,
     ):
         """Log a single step.
 
@@ -80,6 +81,10 @@ class ReplayLogger:
         parse failure, etc.) instead of a real model decision. Offline
         analysis uses this to distinguish "the model picked action X" from
         "the LLM crashed and we defaulted to the first valid action".
+
+        ``raw_state`` is the bridge's full game state dict. Included so
+        offline analysis can inspect exact card values, merge previews,
+        and slot contents without re-deriving them from the observation.
         """
         # Convert numpy arrays to lists for JSON serialization
         obs_serializable = {}
@@ -89,7 +94,7 @@ class ReplayLogger:
             else:
                 obs_serializable[k] = v
 
-        self._write({
+        entry = {
             "type": "step",
             "step": self.step_count,
             "timestamp": time.time(),
@@ -102,7 +107,10 @@ class ReplayLogger:
             "mana": observation.get("mana", [0])[0] if isinstance(observation.get("mana"), (list, np.ndarray)) else observation.get("mana", 0),
             "info_max_mana": info.get("max_mana") if info else None,
             "fallback_reason": fallback_reason,
-        })
+        }
+        if raw_state is not None:
+            entry["raw_state"] = raw_state
+        self._write(entry)
 
         self.step_count += 1
 
