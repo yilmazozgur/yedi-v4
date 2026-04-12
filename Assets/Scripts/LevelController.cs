@@ -162,13 +162,11 @@ public class LevelController : MonoBehaviour {
         SetLevelParameters();
         SaveModes();
 
-        // In benchmark mode (selectedLevel == 9), hide every BuyCardButton
-        // sprite — including CardAny. The agent draws via AgentBridge →
-        // CardDrawer.DrawCard() directly and never clicks these buttons, so
-        // their card-shaped SpriteRenderers are just visual noise that shows
-        // up as phantom "empty" cards in screenshots. We push cardType /
-        // cardCost / superCard directly to CardDrawer here, bypassing the
-        // 2-second BuyCardButton.DefaultEnable() coroutine entirely.
+        // In benchmark mode (selectedLevel == 9), push cardType / cost
+        // directly to CardDrawer so drawing works immediately without
+        // waiting for BuyCardButton's 2-second DefaultEnable() coroutine.
+        // The left-side dimension indicator panel stays visible — it's
+        // useful context in screenshots.
         if (selectedLevel == 9 && cardAny != null)
         {
             // Count active dimensions from the 7-digit encoding to derive cost.
@@ -186,13 +184,6 @@ public class LevelController : MonoBehaviour {
             cardDrawer.SetCardType(cardAny.cardType);
             cardDrawer.SetCardCost(Mathf.Round(10f * activeDims));
             cardDrawer.SetSuperCard(false);
-
-            // Hide the entire "Buttons Vertical VFX" container — this gets
-            // the Background panel, all Card1D* buttons, and CardAny itself
-            // in one shot. Hierarchy: CardAny → Background → Buttons Vertical VFX.
-            Transform buttonsContainer = cardAny.transform.parent?.parent;
-            if (buttonsContainer != null)
-                buttonsContainer.gameObject.SetActive(false);
         }
 
         // Add ScoreManager for max Mana tracking per game config
