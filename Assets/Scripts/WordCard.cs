@@ -46,8 +46,6 @@ public class WordCard : CardTypeBase
     {
         base.Start();
         levelController = LevelController.Instance;
-        if (cardFrameAttached != null && cardFrameAttached.IsInitialized)
-            return; // ActivateComponents() already set our values
         SetWordsForMode();
         randomIndex = Random.Range(0, wordList.Length);
         wordInitial = SetWord();

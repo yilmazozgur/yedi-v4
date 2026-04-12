@@ -28,8 +28,6 @@ public class NumberCard : CardTypeBase
     {
         base.Start();
         costText = GetComponentInChildren<TextMeshProUGUI>();
-        if (cardFrameAttached != null && cardFrameAttached.IsInitialized)
-            return; // ActivateComponents() already set our values
         numberValueInitial = SetNumber();
     }
 

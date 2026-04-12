@@ -29,8 +29,6 @@ public class BeatCard : CardTypeBase
 
         base.Start();
         beatGenerator = BeatGenerator.Instance;
-        if (cardFrameAttached != null && cardFrameAttached.IsInitialized)
-            return; // ActivateComponents() already set our values
         SetBeat();
     }
 
