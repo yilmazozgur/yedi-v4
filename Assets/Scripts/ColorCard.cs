@@ -39,6 +39,8 @@ public class ColorCard : CardTypeBase
     protected override void Start()
     {
         base.Start();
+        if (cardFrameAttached != null && cardFrameAttached.IsInitialized)
+            return; // ActivateComponents() already set our values
         SetColorsForMode();
         colorInitial = SetColor();
     }

@@ -24,9 +24,15 @@ public abstract class CardTypeBase : MonoBehaviour
         manaIncreaseMultiplier1 = manaDisplay.manaIncreaseMultiplier1;
         manaIncreaseMultiplier2 = manaDisplay.manaIncreaseMultiplier2;
         manaIncreaseMultiplier3 = manaDisplay.manaIncreaseMultiplier3;
-        activated = false;
         cardFrameAttached = GetComponentInParent<CardFrame>();
         cardSuper = cardFrameAttached.cardSuper;
         cardAttached = cardFrameAttached.cardObject;
+        // Only reset activated when ActivateComponents() hasn't run yet.
+        // When EnsureActivated() fires before this Start(), the card
+        // already has valid dimension values. Resetting activated here
+        // would cause child Set*() methods to overwrite them with
+        // sentinels (colorEmpty, shape index 8, number -1000, etc.).
+        if (!cardFrameAttached.IsInitialized)
+            activated = false;
     }
 }

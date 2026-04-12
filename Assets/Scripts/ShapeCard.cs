@@ -21,6 +21,8 @@ public class ShapeCard : CardTypeBase
     protected override void Start()
     {
         base.Start();
+        if (cardFrameAttached != null && cardFrameAttached.IsInitialized)
+            return; // ActivateComponents() already set our values
         SetShapesForMode();
         spriteInitial = SetShape();
     }

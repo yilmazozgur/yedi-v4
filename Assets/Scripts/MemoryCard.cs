@@ -53,7 +53,8 @@ public class MemoryCard : CardTypeBase
 
         base.Start();
         memoryGenerator = FindAnyObjectByType<MemoryGenerator>();
-
+        if (cardFrameAttached != null && cardFrameAttached.IsInitialized)
+            return; // ActivateComponents() already set our values
         SetMemory();
     }
 

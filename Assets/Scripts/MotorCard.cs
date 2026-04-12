@@ -31,6 +31,8 @@ public class MotorCard : CardTypeBase
 
         base.Start();
         motorGenerator = FindAnyObjectByType<MotorGenerator>();
+        if (cardFrameAttached != null && cardFrameAttached.IsInitialized)
+            return; // ActivateComponents() already set our values
         SetMotor();
     }
 
