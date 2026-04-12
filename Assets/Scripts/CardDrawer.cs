@@ -9,6 +9,11 @@ public class CardDrawer : MonoBehaviour
     private void Awake()
     {
         Instance = this;
+        // Initialize cardType early so LevelController.Start() can
+        // override it before any draws happen.  Previously this lived in
+        // Start() and could run AFTER LevelController.Start(), resetting
+        // the value that was just set for benchmark mode.
+        cardType = -1f;
     }
 
     [SerializeField] Card cardPrefab;
@@ -32,7 +37,6 @@ public class CardDrawer : MonoBehaviour
         tutorialController = TutorialController.Instance;
         manaDisplay = ManaDisplay.Instance;
         superDisplay = SuperDisplay.Instance;
-        cardType = -1f;
     }
 
     void Update()

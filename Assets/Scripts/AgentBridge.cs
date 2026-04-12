@@ -467,6 +467,12 @@ public class AgentBridge : MonoBehaviour
             return;
         }
 
+        if (cardDrawer.GetCardType() <= 0f)
+        {
+            SendError(cmd.seq, "CardDrawer cardType not set (still " + cardDrawer.GetCardType() + ")");
+            return;
+        }
+
         cardDrawer.DrawCard();
         cardIdCounter++;
         IncrementAction();

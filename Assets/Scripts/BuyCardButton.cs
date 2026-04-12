@@ -39,7 +39,7 @@ public class BuyCardButton : MonoBehaviour
         currentCardType = cardDrawer.GetCardType();
         costText = GetComponentInChildren<Text>();
 
-        yield return new WaitForSeconds(2f);
+        yield return new WaitForSecondsRealtime(2f);
 
         LabelButtonWithCost();
         DefaultEnable();
