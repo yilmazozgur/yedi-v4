@@ -2,7 +2,9 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 using BayatGames.SaveGameFree;
+using Michsky.UI.ModernUIPack;
 
 public class GameTimer : MonoBehaviour {
 
@@ -16,6 +18,8 @@ public class GameTimer : MonoBehaviour {
     public float levelTime = 40;
     public bool triggeredLevelFinished = false;
     Slider timeSlider;
+    SliderManager sliderManager;
+    TextMeshProUGUI stepValueText;
     LevelController levelController;
     bool timerFinished = false;
     public float totalTime = 0f;
@@ -26,6 +30,9 @@ public class GameTimer : MonoBehaviour {
     {
         SetTime();
         timeSlider = GetComponent<Slider>();
+        sliderManager = GetComponent<SliderManager>();
+        if (sliderManager != null)
+            stepValueText = sliderManager.valueText;
         levelController = LevelController.Instance;
         timePreviousFrame = Time.timeSinceLevelLoad;
     }
@@ -60,14 +67,36 @@ public class GameTimer : MonoBehaviour {
             timePreviousFrame = Time.timeSinceLevelLoad;
             return;
         }
-        timeSlider.value = 100f * (1f - totalTime / levelTime);
-        totalTime += Time.timeSinceLevelLoad - timePreviousFrame;
-        timePreviousFrame = Time.timeSinceLevelLoad;
-        timerFinished = (totalTime >= levelTime);
-        if (timerFinished)
+
+        // Step-limited (benchmark) mode: the UI shows current/max actions
+        // instead of a wall-clock countdown. The game itself is turn-based
+        // now, so a seconds display is confounded by inference latency and
+        // isn't meaningful. When no benchmark is running (maxSteps == 0),
+        // fall back to the legacy time-based display for human play.
+        var bridge = AgentBridge.Instance;
+        if (bridge != null && bridge.MaxSteps > 0)
         {
-            levelController.LevelTimerFinished();
-            //triggeredLevelFinished = true;
+            int step = bridge.ActionCount;
+            int max = bridge.MaxSteps;
+            float remaining = Mathf.Clamp01(1f - (float)step / max);
+            timeSlider.value = 100f * remaining;
+            if (stepValueText != null)
+                stepValueText.text = step + "/" + max;
+            // The termination check is owned by AgentBridge (it also fires
+            // the end_game message to Python); GameTimer just mirrors the
+            // state here so the UI doesn't show 0/100 after the bridge has
+            // already torn down.
+        }
+        else
+        {
+            timeSlider.value = 100f * (1f - totalTime / levelTime);
+            totalTime += Time.timeSinceLevelLoad - timePreviousFrame;
+            timePreviousFrame = Time.timeSinceLevelLoad;
+            timerFinished = (totalTime >= levelTime);
+            if (timerFinished)
+            {
+                levelController.LevelTimerFinished();
+            }
         }
 	}
 }

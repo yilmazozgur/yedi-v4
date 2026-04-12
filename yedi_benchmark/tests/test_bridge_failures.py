@@ -482,6 +482,7 @@ class TestStepRaisesOnBrokenState:
         env._loop = None
         env._state = _fresh_state(mana=200, mana_max=200)
         env._prev_mana = 200.0
+        env._prev_mana_max = 200.0
         env._step_count = 0
         env.max_steps = 100
 
@@ -599,6 +600,34 @@ class TestWaitForFreshState:
             assert "valid_actions_count" in msg
         else:
             pytest.fail("expected BridgeDisconnectedError")
+
+    def test_polls_past_unity_error_responses(self, monkeypatch):
+        """Unity's AgentBridge sends {"type": "error", "message": "Game not
+        ready"} while CacheReferencesDelayed hasn't finished. These lack a
+        top-level "error" key so _send_command lets them through. The polling
+        loop must recognise them and keep trying — not treat them as stale
+        state (which left last_state = {} and produced the misleading
+        {mana: None, action_count: None} diagnostic in run_fe6129041779)."""
+        unity_error = {"type": "error", "message": "Game not ready", "seq": 1}
+        responses = [
+            unity_error,
+            unity_error,
+            unity_error,
+            _fresh_state(),
+        ]
+        env = self._make_env_with_responses(responses, monkeypatch)
+        result = env._wait_for_fresh_state(timeout=5.0)
+        assert result["mana"] == 200
+        assert result["action_count"] == 0
+
+    def test_unity_error_timeout_shows_error_count(self, monkeypatch):
+        """If we only ever get Unity error responses, the diagnostic should
+        include the error count so the operator knows it's a scene-load
+        problem, not a stale-state problem."""
+        unity_error = {"type": "error", "message": "Game not ready", "seq": 1}
+        env = self._make_env_with_responses([unity_error], monkeypatch)
+        with pytest.raises(BridgeDisconnectedError, match="error_responses"):
+            env._wait_for_fresh_state(timeout=0.05)
 
     def test_does_not_call_send_command_after_success(self, monkeypatch):
         """Once we've seen a fresh frame we must stop polling — extra

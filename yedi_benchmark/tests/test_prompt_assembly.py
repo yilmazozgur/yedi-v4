@@ -142,6 +142,7 @@ class TestDescribeState:
         out = describe_state({
             "mana": 250, "mana_max": 300,
             "action_count": 5, "max_steps": 100,
+            "mode_number": "add",
             "slots": [
                 {"occupied": True, "card_mana": 9, "merges_done": 0, "number_value": 3, "number_active": True},
                 {"occupied": False},
@@ -317,6 +318,8 @@ class TestDescribeState:
         raw = {
             "mana": 200, "mana_max": 200,
             "action_count": 0, "max_steps": 100,
+            "mode_number": "add", "mode_color": "add",
+            "mode_shape": "triangle", "mode_word": "verbs",
             "slots": [
                 {
                     "occupied": True, "card_mana": 9, "merges_done": 1,
@@ -361,6 +364,7 @@ class TestDescribeState:
         depend on the per-dim tokens."""
         raw = {
             "mana": 200, "mana_max": 200,
+            "mode_number": "add",
             "slots": [
                 {"occupied": True, "card_mana": 9, "merges_done": 0,
                  "number_value": 3, "number_active": True},
@@ -842,6 +846,19 @@ class TestVisionLeakGuards:
         )
         assert "HISTORY FORMAT (compact mode) ====" in out
         assert "vision" not in out.split("HISTORY FORMAT")[1].splitlines()[0]
+
+    def test_build_system_prompt_includes_merge_preview_instructions(self):
+        out = build_system_prompt(
+            {"number": "add"},
+            show_merge_previews=True,
+        )
+        assert "MERGE PREVIEWS" in out
+        assert "DO NOT try to compute merge quality yourself" in out
+        assert "ground truth" in out
+
+    def test_build_system_prompt_omits_merge_preview_when_disabled(self):
+        out = build_system_prompt({"number": "add"})
+        assert "MERGE PREVIEWS" not in out
 
     def test_llm_agent_vision_compact_no_attribute_leak(self):
         """End-to-end: a vision + compact LLMAgent's outgoing user text must

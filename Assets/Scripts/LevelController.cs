@@ -153,6 +153,32 @@ public class LevelController : MonoBehaviour {
             {
                 cardAny = cardButton;
             }
+
+            // The benchmark only needs CardAny — it gets cardType overridden to
+            // the full 7-digit encoding below and fires DefaultEnable to push
+            // that into CardDrawer. Every other BuyCardButton in the "Buttons
+            // Vertical VFX" prefab (Card1DNumber/Color/Shape/Word/Music/Memory/
+            // Physical) is a pre-benchmark per-dimension selector. They either
+            // end up with `disabled = true` (when their dim isn't in the mode)
+            // or redundantly overlap CardAny — but in both cases their card-
+            // shaped SpriteRenderer keeps drawing, so the agent sees phantom
+            // "empty" cards in the UI. Hide their GameObjects once we've
+            // captured the references SetLevelParameters needs.
+            //
+            // Also hide the legacy Card1D/Card2D/Card3D/Card4D buttons that
+            // still ship in Buttons.prefab but aren't in the current scene —
+            // the name check is a no-op there and a safety net if the prefab
+            // is swapped back in.
+            string btnName = cardButton.gameObject.name;
+            if (btnName == "Card1DNumber" || btnName == "Card1DColor" ||
+                btnName == "Card1DShape"  || btnName == "Card1DWord"  ||
+                btnName == "Card1DMusic"  || btnName == "Card1DMemory" ||
+                btnName == "Card1DPhysical" ||
+                btnName == "Card1D" || btnName == "Card2D" ||
+                btnName == "Card3D" || btnName == "Card4D")
+            {
+                cardButton.gameObject.SetActive(false);
+            }
         }
 
         tutorial.gameObject.SetActive(false);

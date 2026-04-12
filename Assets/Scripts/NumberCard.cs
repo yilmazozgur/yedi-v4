@@ -170,26 +170,29 @@ public class NumberCard : CardTypeBase
                 return 0f;
             }
 
-            if (numberSelected == 0f && newNumber == 0f)
+            if (Mathf.Abs(numberSelected) < 0.01f && Mathf.Abs(newNumber) < 0.01f)
             {
                 return 3f;
             }
-            if (numberSelected == 0f && newNumber != 0f)
+            if (Mathf.Abs(numberSelected) < 0.01f && Mathf.Abs(newNumber) >= 0.01f)
             {
                 return -1f;
             }
-            if (numberSelected != 0f && newNumber == 0f)
+            if (Mathf.Abs(numberSelected) >= 0.01f && Mathf.Abs(newNumber) < 0.01f)
             {
                 return 0f;
             }
-            if (numberSelected + newNumber == 0f)
+            if (Mathf.Abs(numberSelected + newNumber) < 0.01f)
             {
                 return 2f;
             }
 
             float numberMerged = numberSelected + newNumber;
             float absDistToZero = Mathf.Abs(numberMerged);
-            float normalizedDist = (absDistToZero - 3f) / 10f;
+            // Must match MergeNumberCard's decay formula exactly (see line ~1424).
+            // Previously used -3f here which made the preview report one tier
+            // better than the real merge (sum=3 showed neutral but delivered 0.9×).
+            float normalizedDist = (absDistToZero - 2f) / 10f;
             float manaMult = Mathf.Max(1f - normalizedDist, 0.7f);
 
             if (manaMult > 1f)
@@ -203,7 +206,7 @@ public class NumberCard : CardTypeBase
 
             return 0f;
         }
-        else if (modeNumber == "multiply")  
+        else if (modeNumber == "multiply")
         {
             if (newNumber == -1000f)
             {
@@ -1393,19 +1396,19 @@ public class NumberCard : CardTypeBase
                 return;
             }
 
-            if (numberSelected == 0f && newNumber == 0f)
+            if (Mathf.Abs(numberSelected) < 0.01f && Mathf.Abs(newNumber) < 0.01f)
             {
                 cardAttached.ChangeCardMana(manaIncreaseMultiplier3);
                 return;
             }
 
-            if (numberSelected == 0f && newNumber != 0f)
+            if (Mathf.Abs(numberSelected) < 0.01f && Mathf.Abs(newNumber) >= 0.01f)
             {
                 cardAttached.ChangeCardMana(manaReductionMultiplier);
                 return;
             }
 
-            if (numberSelected != 0f && newNumber == 0f)
+            if (Mathf.Abs(numberSelected) >= 0.01f && Mathf.Abs(newNumber) < 0.01f)
             {
                 numberSelected = newNumber;
                 SetNumberValueCard(numberSelected);
@@ -1414,7 +1417,7 @@ public class NumberCard : CardTypeBase
 
             numberSelected += newNumber;
             SetNumberValueCard(numberSelected);
-            if (numberSelected == 0f)
+            if (Mathf.Abs(numberSelected) < 0.01f)
             {
                 cardAttached.ChangeCardMana(manaIncreaseMultiplier2);
             }

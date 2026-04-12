@@ -142,6 +142,7 @@ class YediEnv(gym.Env):
         self._loop = None
         self._state = None
         self._prev_mana = 0
+        self._prev_mana_max = 0
         self._step_count = 0
 
     # ------------------------------------------------------------------
@@ -322,9 +323,26 @@ class YediEnv(gym.Env):
         """
         deadline = time.monotonic() + timeout
         last_state: dict = {}
+        error_count = 0
         while time.monotonic() < deadline:
             response = self._send_command({"type": "get_state"})
+
+            # Unity's AgentBridge sends {"type": "error", "message": "Game
+            # not ready"} while CacheReferencesDelayed hasn't finished. These
+            # DON'T carry a top-level "error" key (that's the server format),
+            # so _send_command lets them through. Recognise them here and keep
+            # polling — the scene just hasn't booted yet.
+            if isinstance(response, dict) and response.get("type") == "error":
+                error_count += 1
+                time.sleep(0.2)
+                continue
+
             if self._is_fresh_state(response):
+                if error_count > 0:
+                    logger.debug(
+                        "fresh state arrived after %d 'not ready' errors",
+                        error_count,
+                    )
                 return response
             last_state = response
             time.sleep(0.2)
@@ -335,6 +353,7 @@ class YediEnv(gym.Env):
             "mana": last_state.get("mana"),
             "action_count": last_state.get("action_count"),
             "valid_actions_count": len(last_state.get("valid_actions") or []),
+            "error_responses": error_count,
         }
         raise BridgeDisconnectedError(
             f"scene reload never produced a fresh state within {timeout}s "
@@ -404,6 +423,7 @@ class YediEnv(gym.Env):
         response = self._wait_for_fresh_state(timeout=15.0)
         self._state = response
         self._prev_mana = self._state.get("mana", 200)
+        self._prev_mana_max = self._state.get("mana_max", self._prev_mana)
         self._step_count = 0
 
         obs = self._state_to_obs(self._state)
@@ -421,6 +441,24 @@ class YediEnv(gym.Env):
             # Some responses (ack, error) don't include state — fetch it
             state_resp = self._send_command({"type": "get_state"})
             self._state = state_resp
+
+        # Draw-settle: Unity's card spawn is async — the draw_card command
+        # returns immediately but the card GameObject may not exist yet when
+        # get_state runs. Without this retry the model sees an empty "new"
+        # slot and wastes a step. Empirically ~7% of draws were lost this
+        # way (~2 per episode, always the first 2). A short poll fixes it.
+        if action == ACTION_DRAW:
+            slots = self._state.get("slots") or []
+            new_slot = slots[0] if slots else {}
+            if isinstance(new_slot, dict) and not new_slot.get("occupied", False):
+                for _ in range(5):
+                    time.sleep(0.1)
+                    retry = self._send_command({"type": "get_state"})
+                    retry_slots = retry.get("slots") or []
+                    retry_new = retry_slots[0] if retry_slots else {}
+                    if isinstance(retry_new, dict) and retry_new.get("occupied", False):
+                        self._state = retry
+                        break
 
         # Detect the bridge's "scene loading" sentinel before treating
         # this as a real step. Without this check the env would keep
@@ -443,6 +481,7 @@ class YediEnv(gym.Env):
         # shaping needed on the Python side.
         reward = self._compute_reward()
         self._prev_mana = self._state.get("mana", 0)
+        self._prev_mana_max = self._state.get("mana_max", self._prev_mana_max)
 
         # Termination
         terminated = self._state.get("game_over", False)
@@ -544,13 +583,19 @@ class YediEnv(gym.Env):
         delta = mana - self._prev_mana
         reward = delta / 100.0
 
-        # Bonus for new max
+        # Bonus for a genuinely new mana_max (Best). The gate compares against
+        # the PREVIOUS step's mana_max, not prev_mana — otherwise the bonus
+        # fires every time the bank climbs above the previous bank level,
+        # which is noise, not a new personal best.
         mana_max = self._state.get("mana_max", 0)
-        if mana_max > self._prev_mana:
+        if mana_max > self._prev_mana_max:
             reward += 0.1
 
-        # Penalty for game over (mana hit 0)
-        if self._state.get("game_over", False):
+        # Penalty for game over, but ONLY if mana actually bottomed out.
+        # Timer expiry also flips game_over, and penalizing every run-to-completion
+        # would bake a constant -1.0 into every episode and confound capability
+        # with episode length.
+        if self._state.get("game_over", False) and mana <= 0:
             reward -= 1.0
 
         return reward

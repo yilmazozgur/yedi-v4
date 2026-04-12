@@ -167,6 +167,55 @@ class TestOllamaProvider:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Together.ai provider — hosted inference via LiteLLM's together_ai/ prefix
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestTogetherProvider:
+    def test_in_supported_providers(self):
+        assert "together" in SUPPORTED_PROVIDERS
+
+    def test_has_default_models(self):
+        assert DEFAULT_MODELS["together"], "together must have a default model menu"
+
+    def test_default_api_key_env(self):
+        assert DEFAULT_API_KEY_ENVS["together"] == "TOGETHER_API_KEY"
+
+    def test_missing_key_rejected(self, monkeypatch):
+        monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+        with pytest.raises(ProviderError, match="requires an API key"):
+            create_provider(
+                "together",
+                "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+                api_key_env="TOGETHER_API_KEY",
+            )
+
+    def test_model_prefix_prepended(self, monkeypatch):
+        monkeypatch.setenv("TOGETHER_API_KEY", "fake-key")
+        p = create_provider(
+            "together",
+            "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+            api_key_env="TOGETHER_API_KEY",
+        )
+        assert p.model == "together_ai/meta-llama/Llama-4-Scout-17B-16E-Instruct"
+        assert p.api_key == "fake-key"
+
+    def test_model_prefix_passthrough(self, monkeypatch):
+        monkeypatch.setenv("TOGETHER_API_KEY", "fake-key")
+        p = create_provider(
+            "together",
+            "together_ai/Qwen/Qwen2.5-VL-72B-Instruct",
+            api_key_env="TOGETHER_API_KEY",
+        )
+        assert p.model == "together_ai/Qwen/Qwen2.5-VL-72B-Instruct"
+
+    def test_empty_model_rejected(self, monkeypatch):
+        monkeypatch.setenv("TOGETHER_API_KEY", "fake-key")
+        with pytest.raises(ProviderError, match="model"):
+            create_provider("together", "", api_key_env="TOGETHER_API_KEY")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Smoke test — pre-run connectivity check used by POST /api/runs
 #
 # The handler calls this BEFORE creating a run record. It must:

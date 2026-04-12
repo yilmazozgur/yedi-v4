@@ -25,6 +25,13 @@ import time
 from pathlib import Path
 from typing import Optional
 
+# Load .env file (ANTHROPIC_API_KEY, etc.) so agent configs can resolve keys.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except ImportError:
+    pass  # python-dotenv not installed — keys must be in the real environment
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -546,7 +553,7 @@ async def serve_game_embed():
             html = f.read()
         if "<base " not in html:
             html = html.replace("<head>", '<head>\n    <base href="/">', 1)
-        return HTMLResponse(html)
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
     except OSError:
         return FileResponse(index_path, media_type="text/html")
 
@@ -633,7 +640,19 @@ def main():
     logger.info(f"Agent WebSocket: ws://{args.host}:{args.port}/ws/agent")
     logger.info(f"Agent HTTP API: http://{args.host}:{args.port}/api/agent/command")
 
-    uvicorn.run(app, host=args.host, port=args.port)
+    # Increase WebSocket ping timeout for cloud LLM providers (Claude,
+    # GPT-4) whose API calls can take 10-30s. The default 20s ping timeout
+    # closes the game bridge while the agent thread is blocked waiting for
+    # an API response — even though the asyncio event loop is still alive.
+    # 120s is generous enough for any provider while still catching truly
+    # dead connections.
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        ws_ping_interval=30,
+        ws_ping_timeout=120,
+    )
 
 
 if __name__ == "__main__":

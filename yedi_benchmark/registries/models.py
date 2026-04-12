@@ -182,6 +182,9 @@ class EpisodeResult(BaseModel):
     episode_log_path: Optional[str] = None  # link to logs/episode_*/ if any
     started_at: str = Field(default_factory=_utcnow_iso)
     finished_at: Optional[str] = None
+    # Per-episode diagnostics for benchmark quality analysis. None when the
+    # runner was invoked without diagnostic tracking (backwards compat).
+    diagnostics: Optional[dict] = None
 
 
 class ConfigResult(BaseModel):

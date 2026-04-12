@@ -20,7 +20,8 @@ from .litellm_provider import LiteLLMProvider
 # refuses to build an LLMProvider for them. The agent factory routes them to
 # RandomAgent / GreedyAgent directly.
 SUPPORTED_PROVIDERS = [
-    "anthropic", "openai", "google", "ollama", "custom", "random", "greedy",
+    "anthropic", "openai", "google", "together", "ollama", "custom",
+    "random", "greedy",
 ]
 
 
@@ -47,6 +48,21 @@ DEFAULT_MODELS: dict[str, list[str]] = {
         "gemini/gemini-2.5-flash",
         "gemini/gemini-1.5-pro",
         "gemini/gemini-1.5-flash",
+    ],
+    # Together.ai — OpenAI-compatible hosted inference. Models routed via
+    # LiteLLM's `together_ai/` prefix (auto-prepended in create_provider).
+    # Vision-capable first (needed for the vision-* agent modes), then strong
+    # text-only models.
+    "together": [
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+        "Qwen/Qwen2.5-VL-72B-Instruct",
+        "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        "Qwen/Qwen2.5-72B-Instruct-Turbo",
+        "deepseek-ai/DeepSeek-V3",
+        "deepseek-ai/DeepSeek-R1",
     ],
     # Local Ollama server. Models listed here are the ones we've validated
     # against the bridge; users can type any `ollama pull` tag.
@@ -89,6 +105,7 @@ DEFAULT_API_KEY_ENVS: dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "google": "GEMINI_API_KEY",
+    "together": "TOGETHER_API_KEY",
     "ollama": "",  # local server, no auth
     "custom": "",
     "random": "",
@@ -104,6 +121,7 @@ DEFAULT_BASE_URLS: dict[str, str] = {
     "anthropic": "",
     "openai": "",
     "google": "",
+    "together": "",  # LiteLLM routes via the together_ai/ prefix
     "ollama": "http://localhost:11434",
     "custom": "",
     "random": "",
@@ -116,6 +134,12 @@ DEFAULT_BASE_URLS: dict[str, str] = {
 # chat, system prompts, and multimodal content blocks — all of which we need
 # for the benchmark.
 _OLLAMA_MODEL_PREFIX = "ollama_chat/"
+
+# LiteLLM prefix used to route Together.ai models through their OpenAI-compatible
+# hosted inference API. The Together model menu in DEFAULT_MODELS stores the bare
+# "org/model" slug; create_provider auto-prepends this prefix so users don't
+# have to type it.
+_TOGETHER_MODEL_PREFIX = "together_ai/"
 
 
 # Default Ollama context window when the agent config doesn't specify one.
@@ -196,12 +220,24 @@ def create_provider(
 
     api_key = resolve_api_key(api_key_env)
 
-    # Anthropic, OpenAI, Google all need a key. Custom and ollama may or may not.
-    if provider in ("anthropic", "openai", "google") and not api_key:
+    # Anthropic, OpenAI, Google, Together all need a key. Custom and ollama may or may not.
+    if provider in ("anthropic", "openai", "google", "together") and not api_key:
         raise ProviderError(
             f"Provider {provider!r} requires an API key. "
             f"Set env var {api_key_env or DEFAULT_API_KEY_ENVS[provider]!r}."
         )
+
+    # Together.ai: hosted inference, LiteLLM routes via the together_ai/ prefix.
+    # Let users type either "meta-llama/Llama-4-Scout-17B-16E-Instruct" or the
+    # fully qualified "together_ai/meta-llama/..." — we only prepend when missing.
+    if provider == "together":
+        if not model:
+            raise ProviderError(
+                "Together.ai provider requires a model "
+                "(e.g. 'meta-llama/Llama-4-Scout-17B-16E-Instruct')."
+            )
+        if not model.startswith(_TOGETHER_MODEL_PREFIX):
+            model = _TOGETHER_MODEL_PREFIX + model
 
     # Ollama: local server with no auth. Apply sensible defaults and rewrite
     # the model string so LiteLLM routes through its ollama_chat backend.

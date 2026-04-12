@@ -179,6 +179,24 @@ def run_episode(
     total_reward = 0
     step = 0
 
+    # ---- Diagnostic counters (benchmark quality tracking) ----
+    diag_wasted_draws = 0      # draws that produced no card
+    diag_merge_tiers = {}      # {tier: count} of merges executed
+    diag_sell_by_merges = {}   # {merges_done: count} of sells
+    diag_previews_available = 0  # turns where previews existed
+    diag_previews_followed = 0   # turns where chosen action matched a preview
+    prev_raw_state = info.get("raw_state", {})
+
+    # Active dimensions for this config — needed to filter merge preview
+    # gains.  Inactive dims always report gain=0, which would drag the
+    # min-tier to "neutral" even when the active dim is GREAT.
+    _active_dims = []
+    _dim_to_gain = {"number": "number_gain", "color": "color_gain",
+                    "shape": "shape_gain", "word": "word_gain"}
+    for dim_key in ("number", "color", "shape", "word"):
+        if env.game_config.get("modes", {}).get(dim_key):
+            _active_dims.append(_dim_to_gain[dim_key])
+
     while step < max_steps:
         # Honour cancel BEFORE an LLM call so we can short-circuit a long
         # run within one step boundary. The LLM call itself is not
@@ -198,6 +216,48 @@ def run_episode(
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
         step += 1
+
+        # ---- Diagnostic tracking ----
+        raw = info.get("raw_state", {})
+        # Wasted draw: action was draw but new slot is still empty
+        if action == 0:
+            slots = raw.get("slots") or []
+            new_slot = slots[0] if slots else {}
+            if isinstance(new_slot, dict) and not new_slot.get("occupied", False):
+                diag_wasted_draws += 1
+        # Sell: record how many merges the sold card had
+        if 31 <= action <= 36:
+            slot_idx = action - 31
+            prev_slots = prev_raw_state.get("slots") or []
+            if slot_idx < len(prev_slots):
+                s = prev_slots[slot_idx]
+                if isinstance(s, dict) and s.get("occupied"):
+                    mc = int(s.get("merges_done", 0) or 0)
+                    diag_sell_by_merges[mc] = diag_sell_by_merges.get(mc, 0) + 1
+        # Merge previews: check if model followed them
+        previews = prev_raw_state.get("merge_previews") or []
+        if previews:
+            diag_previews_available += 1
+            preview_actions = {p.get("action") for p in previews if p.get("action") is not None}
+            if action in preview_actions:
+                diag_previews_followed += 1
+                # Record which tier was chosen — use the MINIMUM gain
+                # across ACTIVE dimensions only (the bottleneck dimension
+                # determines merge quality).  Inactive dims always report
+                # gain=0, so including them would drag every merge to
+                # "neutral" regardless of actual quality.
+                _tier_map = {3: "PERFECT", 2: "GREAT", 1: "GOOD",
+                             0: "neutral", -1: "BAD"}
+                for p in previews:
+                    if p.get("action") == action:
+                        gains = [int(p[field]) for field in _active_dims
+                                 if p.get(field) is not None]
+                        if gains:
+                            min_gain = min(gains)
+                            tier_name = _tier_map.get(min_gain, f"tier{min_gain}")
+                            diag_merge_tiers[tier_name] = diag_merge_tiers.get(tier_name, 0) + 1
+                        break
+        prev_raw_state = raw
 
         agent.on_step_result(action, reward, terminated, info)
 
@@ -228,6 +288,13 @@ def run_episode(
         "total_reward": total_reward,
         "steps": step,
         "game_over": terminated,
+        "diagnostics": {
+            "wasted_draws": diag_wasted_draws,
+            "merge_tiers_chosen": diag_merge_tiers,
+            "sell_by_merges": diag_sell_by_merges,
+            "previews_available": diag_previews_available,
+            "previews_followed": diag_previews_followed,
+        },
     }
 
 
@@ -575,6 +642,7 @@ def run_benchmark_with_registry(
                             game_over=bool(result["game_over"]),
                             started_at=ep_started,
                             finished_at=_now_iso(),
+                            diagnostics=result.get("diagnostics"),
                         ),
                     )
                     consecutive_bridge_failures = 0

@@ -13,15 +13,11 @@ public class ManaDisplay : MonoBehaviour
     }
 
     public float baseMana = 200;
-    [SerializeField] float timeManaDiv = 5f;
     public float manaValue;
     public float manaValueMax;
     float manaValueRounded;
     Text manaText;
     bool triggeredLevelFinished = false;
-    float timeManaCost;
-    float timeManaCostCumulative = 0;
-    float levelTimer;
     float difficulty;
     public float manaPerTime = 0;
     public float manaPerTimeMax = 0;
@@ -74,25 +70,20 @@ public class ManaDisplay : MonoBehaviour
         }
 
         manaText = GetComponent<Text>();
-        levelTimer = Time.timeSinceLevelLoad;
         UpdateDisplay();
 
         statsCollectorExpanded = StatsCollectorExpanded.Instance;
-        //AddMana(0f);
-        //statsCollectorExpanded.UpdateMaxManaValue(manaValue);
+        manaValueMax = manaValue;
+        statsCollectorExpanded.UpdateMaxManaValue(manaValue);
     }
 
     void Update()
     {
         if (triggeredLevelFinished) { return; }
-        timeManaCost = (Time.timeSinceLevelLoad - levelTimer) / timeManaDiv;
-        timeManaCostCumulative += timeManaCost;
-        levelTimer = Time.timeSinceLevelLoad;
-        if (timeManaCostCumulative >= 1)
-        {
-            SpendMana(timeManaCostCumulative);
-            timeManaCostCumulative = 0;
-        }
+        // Time-based mana drain removed: the game is now step-limited (turn-based)
+        // for the benchmark, so decaying mana against wall-clock confounded agent
+        // capability with inference latency. Mana now changes only through
+        // player/agent actions (draw, merge, sell) and card destruction refunds.
         manaPerTime = Mathf.Max((difficulty + 1) * (manaValue - baseMana) /
             Time.timeSinceLevelLoad, 0);
         if (manaPerTime > manaPerTimeMax)
@@ -100,7 +91,6 @@ public class ManaDisplay : MonoBehaviour
             manaPerTimeMax = manaPerTime;
             statsCollectorExpanded.UpdateMaxManaPerTime(manaPerTimeMax);
         }
-
     }
 
     private void UpdateDisplay()

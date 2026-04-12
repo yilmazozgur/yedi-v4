@@ -41,9 +41,13 @@ public class AgentBridge : MonoBehaviour
     bool refsReady = false;
     int cardIdCounter = 0;
 
-    // Step-based game limit (0 = no limit, use timer)
+    // Step-based game limit (0 = no limit, use timer).
+    // Exposed via public properties so GameTimer can drive the on-screen
+    // step counter UI without having to receive its own RPC from Python.
     int maxSteps = 0;
     int actionCount = 0;
+    public int MaxSteps => maxSteps;
+    public int ActionCount => actionCount;
 
     // Mana deducted when an agent issues a slot-to-slot move that does NOT
     // produce a merge (oscillation pattern). The reward-shaping penalty in
@@ -59,6 +63,18 @@ public class AgentBridge : MonoBehaviour
     // every value regardless of the hidden flag. Configured per-run via
     // start_game.perfect_memory.
     bool perfectMemory = false;
+
+    // When true, Time.timeScale is forced to 0 between agent actions so that
+    // mana drain and the episode timer do NOT advance while the agent is
+    // thinking. This is the fairness invariant for model comparisons: a slow
+    // model should not lose mana just because its inference takes longer.
+    //
+    // DEFAULT OFF: the previous "on" default froze card/merge animations
+    // mid-flight (they use scaled WaitForSeconds coroutines) and caused the
+    // Chrome WebGL canvas to lose its GPU mailbox during long idle gaps.
+    // Re-enable per run via `set_time_scale` with time_scale <= 0 once the
+    // animation pipeline is converted to WaitForSecondsRealtime.
+    bool pauseBetweenActions = false;
 
     // Auto-create the AgentBridge at startup — no manual scene setup needed
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -79,6 +95,11 @@ public class AgentBridge : MonoBehaviour
         }
         Instance = this;
         DontDestroyOnLoad(gameObject);
+
+        // Disable the Development Console overlay — it renders on the canvas
+        // and ruins vision-based benchmarks (screenshots include the overlay).
+        Debug.developerConsoleEnabled = false;
+        Debug.developerConsoleVisible = false;
     }
 
     void Start()
@@ -123,7 +144,7 @@ public class AgentBridge : MonoBehaviour
         }
         catch (System.Exception e)
         {
-            Debug.LogWarning("[AgentBridge] Could not read URL params: " + e.Message);
+            Debug.Log("[AgentBridge] WARN: Could not read URL params: " + e.Message);
         }
 #endif
         return null;
@@ -142,12 +163,36 @@ public class AgentBridge : MonoBehaviour
         yield return null;
         TryCacheReferences();
 
+        // In WebGL, scene loading is async and singletons may not be ready
+        // after just 2 frames. Retry for up to ~2 seconds (60 frames) so we
+        // don't leave refsReady permanently false — which causes every
+        // subsequent get_state to return "Game not ready" and wastes entire
+        // benchmark episodes on a 15s polling timeout.
+        if (!refsReady)
+        {
+            Debug.Log("[AgentBridge] Singletons not ready after 2 frames, retrying...");
+            for (int i = 0; i < 60 && !refsReady; i++)
+            {
+                yield return null;
+                TryCacheReferences();
+            }
+            if (!refsReady)
+                Debug.Log("[AgentBridge] WARNING: Singletons still not ready after 60 retries");
+        }
+
         // In step-based mode, disable the game timer so only step count ends the game
         if (maxSteps > 0 && gameTimer != null)
         {
             gameTimer.levelTime = 999999f; // Effectively infinite
             Debug.Log("[AgentBridge] Step-based mode: timer disabled, max_steps=" + maxSteps);
         }
+
+        // Freeze the scene so mana drain and the episode timer do not advance
+        // before the agent's first action. Without this, the stretch between
+        // scene load and the first command burns 1-3 mana plus a chunk of
+        // timer, which shows up as spurious starting-state variance.
+        if (agentMode)
+            PauseTimeForAgent();
 
         // If agent is connected, send a scene_loaded event
         if (agentMode)
@@ -260,7 +305,20 @@ public class AgentBridge : MonoBehaviour
                     ExecuteReset(cmd);
                     break;
                 case "set_time_scale":
-                    Time.timeScale = cmd.time_scale;
+                    // time_scale=0 means "agent-pause mode" (default — the
+                    // bridge freezes time between actions). Any positive
+                    // value disables the pause and runs real-time at that
+                    // scale for Music/Motor ablations.
+                    if (cmd.time_scale <= 0f)
+                    {
+                        pauseBetweenActions = true;
+                        Time.timeScale = 0f;
+                    }
+                    else
+                    {
+                        pauseBetweenActions = false;
+                        Time.timeScale = cmd.time_scale;
+                    }
                     SendAck(cmd.seq, true);
                     break;
                 case "step_time":
@@ -287,7 +345,7 @@ public class AgentBridge : MonoBehaviour
         {
             int seq = (cmd != null) ? cmd.seq : 0;
             string cmdType = (cmd != null && !string.IsNullOrEmpty(cmd.type)) ? cmd.type : "unknown";
-            Debug.LogError("[AgentBridge] " + cmdType + " threw: " + e);
+            Debug.Log("[AgentBridge] ERROR: " + cmdType + " threw: " + e);
             SendError(seq, cmdType + " failed: " + e.Message);
         }
     }
@@ -300,6 +358,12 @@ public class AgentBridge : MonoBehaviour
     /// Run TryCacheReferences + SendState inside a try/catch so a serializer
     /// crash inside a coroutine surfaces as a bridge error instead of dying
     /// silently and stalling the agent on a 30s wait_for.
+    ///
+    /// After the state is on the wire we freeze Time.timeScale so no drain or
+    /// timer advance happens while the agent is deliberating (see
+    /// pauseBetweenActions). Every action handler calls ResumeTimeForAction()
+    /// before executing so game logic, animations, and coroutines still run
+    /// during the action itself.
     /// </summary>
     void SafeSendState(int seq, string cmdLabel)
     {
@@ -310,9 +374,31 @@ public class AgentBridge : MonoBehaviour
         }
         catch (System.Exception e)
         {
-            Debug.LogError("[AgentBridge] " + cmdLabel + " serialize failed: " + e);
+            Debug.Log("[AgentBridge] ERROR: " + cmdLabel + " serialize failed: " + e);
             SendError(seq, cmdLabel + " serialize failed: " + e.Message);
         }
+        PauseTimeForAgent();
+    }
+
+    /// <summary>
+    /// Freeze Time.timeScale so mana drain and the episode timer stop while
+    /// the agent is thinking. Called at the end of every post-action state
+    /// send. No-op when pauseBetweenActions is false (real-time ablation).
+    /// </summary>
+    void PauseTimeForAgent()
+    {
+        if (pauseBetweenActions)
+            Time.timeScale = 0f;
+    }
+
+    /// <summary>
+    /// Restore Time.timeScale = 1 before executing an action so card
+    /// animations, delayed initializations, and game-logic coroutines that
+    /// rely on Time.deltaTime can run to completion.
+    /// </summary>
+    void ResumeTimeForAction()
+    {
+        Time.timeScale = 1f;
     }
 
     // ------------------------------------------------------------------
@@ -348,7 +434,7 @@ public class AgentBridge : MonoBehaviour
         }
         catch (System.Exception e)
         {
-            Debug.LogWarning("[AgentBridge] EndGameAfterFrames scene unload threw: " + e.Message);
+            Debug.Log("[AgentBridge] WARN: EndGameAfterFrames scene unload threw: " + e.Message);
         }
     }
 
@@ -359,6 +445,8 @@ public class AgentBridge : MonoBehaviour
             SendError(cmd.seq, "Game not ready");
             return;
         }
+
+        ResumeTimeForAction();
 
         if (cardDrawer == null)
         {
@@ -424,13 +512,13 @@ public class AgentBridge : MonoBehaviour
             }
             catch (System.Exception e)
             {
-                Debug.LogWarning("[AgentBridge] WaitForDrawReady iter " + i +
+                Debug.Log("[AgentBridge] WARN: WaitForDrawReady iter " + i +
                                  " threw, retrying: " + e.Message);
                 continue;
             }
             if (ready) yield break;
         }
-        Debug.LogWarning("[AgentBridge] WaitForDrawReady gave up after " + maxFrames + " frames");
+        Debug.Log("[AgentBridge] WARN: WaitForDrawReady gave up after " + maxFrames + " frames");
     }
 
     IEnumerator SendStateAfterDrawReady(int seq)
@@ -453,7 +541,7 @@ public class AgentBridge : MonoBehaviour
         }
         catch (System.Exception e)
         {
-            Debug.LogWarning("[AgentBridge] EndGameAfterDrawReady scene unload threw: " + e.Message);
+            Debug.Log("[AgentBridge] WARN: EndGameAfterDrawReady scene unload threw: " + e.Message);
         }
     }
 
@@ -464,6 +552,8 @@ public class AgentBridge : MonoBehaviour
             SendError(cmd.seq, "Game not ready");
             return;
         }
+
+        ResumeTimeForAction();
 
         SlotGeneric sourceSlot = GetSlotByName(cmd.source);
         SlotGeneric targetSlot = GetSlotByName(cmd.target);
@@ -505,9 +595,29 @@ public class AgentBridge : MonoBehaviour
         bool sourceIsBuildSlot = (sourceSlot != slotNew);
         int occupiedBefore = CountOccupiedBoardSlots();
 
+        // Capture the potential merge victim BEFORE the drop. If the target
+        // slot is occupied, this card will be destroyed by the merge via a
+        // delayed Destroy(obj, 0.1f) — which races our state serialization
+        // and never fires at all when Time.timeScale == 0. We force a
+        // synchronous destroy after the drop so its OnDestroy refund
+        // (AddMana(cardMana)) is reflected in the next state snapshot.
+        Card cardOther = targetSlot.GetCardObject();
+        CardFrame cardFrameOther = cardOther != null ? cardOther.GetCardFrame() : null;
+
         // Execute programmatic drop
         frame.ExecuteProgrammaticDrop(targetSlot, cmd.motor_time, cmd.motor_distance,
             cmd.motor_dist_to_slot, cmd.motor_half_distance, cmd.motor_min_distances);
+
+        // If a merge happened, the target slot now holds the moving card
+        // instead of cardOther. Destroy the orphaned victim synchronously.
+        if (cardOther != null && cardOther.gameObject != null &&
+            targetSlot.GetCardObject() != cardOther)
+        {
+            DestroyImmediate(cardOther.gameObject);
+            if (cardFrameOther != null && cardFrameOther.gameObject != null)
+                DestroyImmediate(cardFrameOther.gameObject);
+        }
+
         IncrementAction();
 
         if (IsStepLimitReached())
@@ -564,7 +674,7 @@ public class AgentBridge : MonoBehaviour
         }
         catch (System.Exception e)
         {
-            Debug.LogError("[AgentBridge] move_card post-check threw: " + e);
+            Debug.Log("[AgentBridge] ERROR: move_card post-check threw: " + e);
             SendError(seq, "move_card post-check failed: " + e.Message);
             yield break;
         }
@@ -579,6 +689,8 @@ public class AgentBridge : MonoBehaviour
             SendError(cmd.seq, "Game not ready");
             return;
         }
+
+        ResumeTimeForAction();
 
         SlotGeneric sourceSlot = GetSlotByName(cmd.source);
         if (sourceSlot == null || !sourceSlot.GetFilledInfo())
@@ -596,8 +708,18 @@ public class AgentBridge : MonoBehaviour
         Card card = sourceSlot.GetCardObject();
         CardFrame frame = card.GetCardFrame();
 
-        // Move to sell slot triggers sell logic
+        // Move to sell slot triggers sell logic (schedules Destroy(obj, 0.3f))
         frame.ExecuteProgrammaticDrop(slotSell, 0, 0, 0, 0, null);
+
+        // Force synchronous destruction so Card.OnDestroy fires AddMana(cardMana)
+        // refund BEFORE we serialize state. The scheduled delayed Destroy would
+        // otherwise race our 2-frame state snapshot (and never fire at all when
+        // Time.timeScale == 0 during agent-paused play).
+        if (card != null && card.gameObject != null)
+            DestroyImmediate(card.gameObject);
+        if (frame != null && frame.gameObject != null)
+            DestroyImmediate(frame.gameObject);
+
         IncrementAction();
 
         if (IsStepLimitReached())
@@ -757,6 +879,12 @@ public class AgentBridge : MonoBehaviour
 
     void ExecuteReset(AgentCommand cmd)
     {
+        // Cancel any in-flight coroutines (especially EndGameAfterFrames from
+        // the previous episode — its auto-nav to Scene Selection Screen races
+        // with this scene load and can override it, stranding the bridge on a
+        // scene with no ManaDisplay/GameTimer → permanent "Game not ready").
+        StopAllCoroutines();
+
         // Reload the gameplay scene for a clean reset
         Debug.Log("[AgentBridge] Resetting — reloading gameplay scene");
         Time.timeScale = 1;
@@ -766,6 +894,15 @@ public class AgentBridge : MonoBehaviour
 
     void ExecuteStartGame(AgentCommand cmd)
     {
+        // Cancel any in-flight coroutines from the previous episode.
+        // EndGameAfterFrames/EndGameAfterDrawReady auto-navigate to
+        // "Scene Selection Screen" after game over. If that coroutine
+        // is still pending when start_game arrives, its LoadScene call
+        // races with ours and can strand the bridge on a scene that has
+        // no gameplay singletons — causing 100% of subsequent get_state
+        // calls to return "Game not ready" for the entire reset timeout.
+        StopAllCoroutines();
+
         // Set game modes directly on HeptagonController static fields
         // This bypasses the Heptagon UI entirely
         HeptagonController.modeNumber = string.IsNullOrEmpty(cmd.mode_number) ? null : cmd.mode_number;
@@ -1212,7 +1349,7 @@ public class AgentBridge : MonoBehaviour
 
     void SendError(int seq, string message)
     {
-        Debug.LogWarning("[AgentBridge] Error: " + message);
+        Debug.Log("[AgentBridge] WARN: Error: " + message);
         var msg = new ErrorMsg { seq = seq, type = "error", message = message };
         SendToServer(JsonUtility.ToJson(msg));
     }
