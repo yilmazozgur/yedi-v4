@@ -14,6 +14,7 @@ from ..providers.registry import (
     DEFAULT_MODELS,
     SUPPORTED_PROVIDERS,
     create_provider,
+    ensure_ollama_model,
 )
 from ..providers.base import ProviderError
 from ..registries import AgentConfig, AgentRegistry
@@ -51,6 +52,14 @@ def create_agent(
         new = AgentConfig(**body.model_dump())
     except ValueError as e:
         raise HTTPException(422, str(e))
+
+    # Ollama: auto-pull the model so it's ready when a run starts.
+    if new.provider == "ollama" and new.model:
+        ok, pull_msg = ensure_ollama_model(new.model, new.base_url)
+        if not ok:
+            logger.warning("Ollama auto-pull failed for %s: %s", new.model, pull_msg)
+            # Don't block agent creation — the model may be pulled later.
+
     try:
         return reg.create(new)
     except AgentRegistryError as e:
@@ -112,6 +121,12 @@ def test_agent(
         return AgentTestResult(success=True, message="Random agent (no provider to test)")
     if agent.provider == "greedy":
         return AgentTestResult(success=True, message="Greedy agent (no provider to test)")
+
+    # Ollama: auto-pull the model before testing connectivity.
+    if agent.provider == "ollama" and agent.model:
+        ok, pull_msg = ensure_ollama_model(agent.model, agent.base_url)
+        if not ok:
+            return AgentTestResult(success=False, message=pull_msg)
 
     try:
         provider = create_provider(

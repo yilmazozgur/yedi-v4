@@ -157,6 +157,74 @@ def resolve_api_key(api_key_env: Optional[str]) -> Optional[str]:
     return os.environ.get(api_key_env)
 
 
+# ---------------------------------------------------------------------------
+# Ollama auto-pull
+# ---------------------------------------------------------------------------
+
+import logging as _logging
+
+_ollama_logger = _logging.getLogger("providers.ollama")
+
+
+def _ollama_model_exists(model: str, base_url: str) -> bool:
+    """Check if a model is already pulled in the local Ollama server."""
+    import urllib.request
+    import json as _json
+    try:
+        url = f"{base_url.rstrip('/')}/api/show"
+        data = _json.dumps({"name": model}).encode()
+        req = urllib.request.Request(url, data=data, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def ensure_ollama_model(model: str, base_url: Optional[str] = None) -> tuple[bool, str]:
+    """Pull an Ollama model if it isn't already available locally.
+
+    Called automatically when an Ollama agent is created or when a run's
+    smoke test fires. Blocks until the pull finishes (can take minutes for
+    large models).
+
+    Returns:
+        (success, message).
+    """
+    base_url = base_url or DEFAULT_BASE_URLS["ollama"]
+
+    # Strip the LiteLLM routing prefix — Ollama's API wants the bare tag.
+    bare_model = model
+    for prefix in ("ollama_chat/", "ollama/"):
+        if bare_model.startswith(prefix):
+            bare_model = bare_model[len(prefix):]
+            break
+
+    if _ollama_model_exists(bare_model, base_url):
+        _ollama_logger.info("Ollama model %s already available", bare_model)
+        return True, f"model '{bare_model}' already available"
+
+    _ollama_logger.info("Pulling Ollama model %s (this may take a while)...", bare_model)
+
+    import urllib.request
+    import json as _json
+    try:
+        url = f"{base_url.rstrip('/')}/api/pull"
+        data = _json.dumps({"name": bare_model, "stream": False}).encode()
+        req = urllib.request.Request(url, data=data, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        # Large models can take many minutes to pull; use a generous timeout.
+        with urllib.request.urlopen(req, timeout=1800) as resp:
+            body = _json.loads(resp.read().decode())
+            status = body.get("status", "unknown")
+            _ollama_logger.info("Ollama pull complete: %s → %s", bare_model, status)
+            return True, f"model '{bare_model}' pulled successfully (status: {status})"
+    except Exception as e:
+        msg = f"Failed to pull Ollama model '{bare_model}': {e}"
+        _ollama_logger.error(msg)
+        return False, msg
+
+
 def smoke_test_agent(agent_cfg, timeout: float = 30.0) -> tuple[bool, str]:
     """Pre-run connectivity + credential check for an AgentConfig.
 
@@ -172,6 +240,15 @@ def smoke_test_agent(agent_cfg, timeout: float = 30.0) -> tuple[bool, str]:
     provider = getattr(agent_cfg, "provider", None)
     if provider in ("random", "greedy"):
         return True, f"{provider} baseline (no provider to test)"
+
+    # Ollama: auto-pull the model if it isn't available locally yet.
+    if provider == "ollama":
+        ok, pull_msg = ensure_ollama_model(
+            agent_cfg.model,
+            getattr(agent_cfg, "base_url", None),
+        )
+        if not ok:
+            return False, pull_msg
 
     try:
         llm = create_provider(
