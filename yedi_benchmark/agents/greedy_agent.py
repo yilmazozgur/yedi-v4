@@ -172,6 +172,23 @@ def _is_slot_neutral(slot: dict, raw_state: dict) -> bool:
     return checked > 0
 
 
+def _has_any_maxed_dim(slot: dict, raw_state: dict) -> bool:
+    """True if slot card is at neutral/identity in ANY active dimension.
+
+    In a multi-dimensional game, a card maxed in even one dimension is a
+    dead end: any further merge will be BAD (gain = -1) in that dimension,
+    which drags the min-gain across dims to -1 and makes the merge net
+    negative. Selling the card frees the slot for productive merges.
+    """
+    for dim in _DIM_TO_GAIN_KEY:
+        mode = raw_state.get(f"mode_{dim}", "")
+        if not mode:
+            continue
+        if _check_dim_neutral(slot, dim, mode):
+            return True
+    return False
+
+
 def _active_dims(raw_state: dict) -> list[str]:
     out = []
     for dim in _DIM_TO_GAIN_KEY:
@@ -247,21 +264,25 @@ class GreedyAgent(BaseAgent):
                     logger.debug("greedy: sell maxed slot %d (action %d)", build_idx, action)
                     return action
 
-        # ---------------- 1b. Sell neutral cards ----------------------
-        # A merged card that reached the identity value in ALL active
-        # dimensions can never improve another card.  Selling it frees
-        # the slot for productive merges.
+        # ---------------- 1b. Sell cards maxed in any dimension --------
+        # A merged card that reached the identity/neutral value in ANY
+        # active dimension is a dead end: further merges will be BAD in
+        # that dimension, dragging the min-gain to -1.  Sell it to free
+        # the slot for productive merges.  In single-dim games this is
+        # equivalent to the old "all neutral" check; in multi-dim games
+        # it catches the much more common case where one dim maxed out
+        # while others haven't.
         for build_idx, slot in enumerate(build_slots, start=1):
             if not slot.get("occupied"):
                 continue
             merges = int(slot.get("merges_done", 0) or 0)
             if merges == 0:
-                continue  # Only sell merged cards that became neutral
-            if _is_slot_neutral(slot, raw_state):
+                continue  # Only sell merged cards that became maxed
+            if _has_any_maxed_dim(slot, raw_state):
                 action = _sell_action(build_idx)
                 if not valid_actions or action in valid_actions:
                     logger.debug(
-                        "greedy: sell neutral slot %d (action %d)",
+                        "greedy: sell maxed-dim slot %d (action %d)",
                         build_idx, action,
                     )
                     return action
