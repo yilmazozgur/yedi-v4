@@ -28,6 +28,12 @@ logger = logging.getLogger("provider.litellm")
 # benchmark batch. Total worst-case wait: 30 + 60 + 120 = 210s.
 RATE_LIMIT_BACKOFFS_SECONDS = (30.0, 60.0, 120.0)
 
+# How many times to retry when the API returns an empty response body (choices
+# present but content is None/""). This typically means the inference backend
+# (e.g. Together) hit a server-side timeout before the model produced its
+# first token — a transient failure that almost always resolves on retry.
+EMPTY_CONTENT_MAX_RETRIES = 2
+
 # How often to wake from a backoff sleep to check should_cancel(). Smaller =
 # more responsive cancel, more no-op wakeups. 1 second is plenty.
 _CANCEL_POLL_INTERVAL = 1.0
@@ -136,14 +142,28 @@ class LiteLLMProvider(LLMProvider):
                 logger.error("LiteLLM call failed for model=%s: %s", self.model, e)
                 raise ProviderError(f"LLM call failed: {e}") from e
 
-        # Extract text from the OpenAI-format response
-        try:
-            choices = response.choices  # type: ignore[attr-defined]
-            if not choices:
-                raise ProviderError("Empty choices in LLM response")
-            content = choices[0].message.content
-            if not content:
+        # Extract text from the OpenAI-format response, retrying on empty
+        # content. Some inference backends (notably Together) occasionally
+        # return a well-formed response with null/empty content when the
+        # model times out server-side (~35s). A simple retry almost always
+        # succeeds because the timeout is transient.
+        for empty_retry in range(EMPTY_CONTENT_MAX_RETRIES + 1):
+            try:
+                choices = response.choices  # type: ignore[attr-defined]
+                if not choices:
+                    raise ProviderError("Empty choices in LLM response")
+                content = choices[0].message.content
+                if content:
+                    return str(content)
+                # Content is empty — retry if we have attempts left.
+                if empty_retry < EMPTY_CONTENT_MAX_RETRIES:
+                    logger.warning(
+                        "Empty content from model=%s (attempt %d/%d), retrying…",
+                        self.model, empty_retry + 1,
+                        EMPTY_CONTENT_MAX_RETRIES + 1,
+                    )
+                    response = completion(**kwargs)
+                    continue
                 raise ProviderError("Empty content in LLM response")
-            return str(content)
-        except AttributeError as e:
-            raise ProviderError(f"Malformed LLM response: {e}") from e
+            except AttributeError as e:
+                raise ProviderError(f"Malformed LLM response: {e}") from e

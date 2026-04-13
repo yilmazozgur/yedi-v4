@@ -44,8 +44,12 @@ if _env_path.exists():
 logger = logging.getLogger("llm_agent")
 
 # Maximum conversation turns to keep (per direction) to bound context size.
-# Each "turn" = 1 user + 1 assistant message.  100 steps ≈ 60-80K tokens.
-MAX_HISTORY_TURNS = 80
+# Each "turn" = 1 user + 1 assistant message.  Compact trail entries average
+# ~120 chars each, so 30 entries ≈ 3.6K chars of history — keeps the total
+# prompt under ~10K tokens even for smaller models (e.g. 20B on Together).
+# The original 80-turn cap allowed context to grow to ~8K+ chars of trail,
+# contributing to server-side timeouts on cost-sensitive inference endpoints.
+MAX_HISTORY_TURNS = 30
 
 
 # =====================================================================

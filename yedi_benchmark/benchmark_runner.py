@@ -217,9 +217,10 @@ def run_episode(
 
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
-        step += 1
 
         # ---- Diagnostic tracking ----
+        # NOTE: step has NOT been incremented yet — diagnostics record the
+        # step number at which the action was *decided*, matching events.jsonl.
         raw = info.get("raw_state", {})
         # Mana trajectory
         step_mana = raw.get("mana", 0)
@@ -273,6 +274,7 @@ def run_episode(
                             })
                         break
         prev_raw_state = raw
+        step += 1
 
         agent.on_step_result(action, reward, terminated, info)
 
