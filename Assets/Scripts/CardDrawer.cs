@@ -43,7 +43,21 @@ public class CardDrawer : MonoBehaviour
     {
         if (Input.GetKeyDown(KeyCode.Space))
         {
+            // Snapshot whether the slot was empty BEFORE the draw so we only
+            // emit a human_step for a draw that actually occurred. DrawCard
+            // is a no-op if the slot is full or mana is insufficient.
+            bool drewSomething = false;
+            SlotNew slotNewObject = FindAnyObjectByType<SlotNew>();
+            SlotGeneric sg = slotNewObject != null ? slotNewObject.GetComponent<SlotGeneric>() : null;
+            bool wasEmpty = sg != null && !sg.GetFilledInfo();
+
             DrawCard();
+
+            if (wasEmpty && sg != null && sg.GetFilledInfo())
+                drewSomething = true;
+
+            if (drewSomething && AgentBridge.recordingMode && AgentBridge.Instance != null)
+                AgentBridge.Instance.EmitHumanStep(0, isDraw: true);
         }
     }
 

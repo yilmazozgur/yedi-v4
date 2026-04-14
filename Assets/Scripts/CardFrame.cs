@@ -410,6 +410,22 @@ public class CardFrame : MonoBehaviour
                 closestComputed = true;
                 closestSlot = findClosestSlot.GetClosestSlot();
 
+                // Compute the bridge action ID for this drop BEFORE any branch
+                // mutates currentSlot. -1 means "not a real action" (snap-back
+                // branches don't emit a human_step). The three real-action
+                // branches below set this via the helper before they return.
+                int humanActionId = -1;
+                if (AgentBridge.recordingMode && currentSlot != null && closestSlot != null
+                    && closestSlot != currentSlot)
+                {
+                    int srcIdx = (currentSlot.GetComponent<SlotNew>() != null)
+                        ? 0 : currentSlot.slotNumber;
+                    if (closestSlot.GetComponent<SlotSell>() != null)
+                        humanActionId = 31 + srcIdx;                                 // SELL(src)
+                    else if (closestSlot.GetComponent<SlotNew>() == null)
+                        humanActionId = 1 + srcIdx * 5 + (closestSlot.slotNumber - 1); // MOVE/MERGE
+                }
+
                 //Trying to drop onto itself
                 if (closestSlot == currentSlot)
                 {
@@ -449,12 +465,14 @@ public class CardFrame : MonoBehaviour
 
                     Destroy(cardObject.gameObject, 0.3f);
                     Destroy(this.gameObject, 0.1f);
-                    
+
                     if (tutorialController && tutorialController.tutorialInitiated)
                     {
                         tutorialController.sellcard = true;
                         tutorialController.ContinueFromTutorialPopup();
                     }
+                    if (humanActionId >= 0 && AgentBridge.Instance != null)
+                        AgentBridge.Instance.EmitHumanStep(humanActionId);
                     return;
                 }
                 //Dragged onto an empty slot, move and clean the previous.
@@ -490,6 +508,8 @@ public class CardFrame : MonoBehaviour
                     {
                         this.memoryCard.ShowCardInfo();
                     }
+                    if (humanActionId >= 0 && AgentBridge.Instance != null)
+                        AgentBridge.Instance.EmitHumanStep(humanActionId);
                     return;
                 }
 
@@ -557,6 +577,8 @@ public class CardFrame : MonoBehaviour
                             tutorialController.ContinueFromTutorialPopup();
                         }
 
+                        if (humanActionId >= 0 && AgentBridge.Instance != null)
+                            AgentBridge.Instance.EmitHumanStep(humanActionId);
                         return;
                     }
                     else

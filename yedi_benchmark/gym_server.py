@@ -190,6 +190,22 @@ class GameConnection:
                 if not fut.done():
                     fut.set_exception(BridgeError("game connection lost"))
             agent_connection.pending_responses.clear()
+            # If a human recording was active when the browser dropped,
+            # the runner is polling for human_game_over that will never
+            # arrive (tab close / WebGL crash bypass OnSceneUnloaded).
+            # Synthesize it so the poll loop exits. Clear the flag so a
+            # browser reconnect doesn't re-fire it.
+            if agent_connection.recording_mode:
+                agent_connection.recording_mode = False
+                try:
+                    agent_connection.event_queue.put_nowait({
+                        "type": "human_game_over",
+                        "reason": "game_disconnected",
+                    })
+                except Exception:
+                    logger.exception(
+                        "failed to enqueue synthetic human_game_over"
+                    )
 
 
 class AgentConnection:
@@ -200,9 +216,17 @@ class AgentConnection:
         self.pending_responses: dict[int, asyncio.Future] = {}
         self.event_queue: asyncio.Queue = asyncio.Queue()
         self.seq = 0
+        # Tracks whether the agent has told the bridge to record human play.
+        # Used by GameConnection.mark_dead to synthesize a terminal event when
+        # the browser drops mid-session (tab close, WebGL crash, network blip)
+        # so the human runner's /api/agent/events poll loop can exit cleanly
+        # instead of hanging forever.
+        self.recording_mode = False
 
     async def send_command(self, command: dict, timeout: float = 30.0) -> dict:
         """Send a command to the game and wait for the response."""
+        if command.get("type") == "set_recording_mode":
+            self.recording_mode = bool(command.get("recording_mode", False))
         self.seq += 1
         command["seq"] = self.seq
         seq = self.seq
@@ -232,10 +256,14 @@ class AgentConnection:
     def on_game_message(self, message: dict):
         """Handle a message from the game, routing to the right pending request."""
         seq = message.get("seq")
+        msg_type = message.get("type", "")
         if seq and seq in self.pending_responses:
             self.pending_responses[seq].set_result(message)
             del self.pending_responses[seq]
-        elif message.get("type") == "event":
+        elif msg_type == "event" or msg_type.startswith("human_"):
+            # Unsolicited bridge messages: scene_loaded events and the
+            # human_step / human_game_over / human_step_missed stream emitted
+            # while recordingMode is on. Queue them for /api/agent/events.
             self.event_queue.put_nowait(message)
         else:
             logger.warning(f"Unrouted game message: {json.dumps(message)[:200]}")

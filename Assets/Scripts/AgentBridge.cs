@@ -25,6 +25,13 @@ public class AgentBridge : MonoBehaviour
     public static bool agentMode = false;
     public static string agentServerUrl = "";
 
+    // Recording mode: orthogonal to agentMode. When true, the human plays
+    // normally in the browser but every action they take (Draw/Move/Merge/Sell)
+    // emits a "human_step" message over the agent WebSocket so the Python
+    // HumanAgent can persist it in the same events.jsonl format as AI runs.
+    // Time is NOT paused — this is a real-time human session.
+    public static bool recordingMode = false;
+
     // Cached references (populated after game scene loads)
     ManaDisplay manaDisplay;
     GameTimer gameTimer;
@@ -105,6 +112,7 @@ public class AgentBridge : MonoBehaviour
     void Start()
     {
         SceneManager.sceneLoaded += OnSceneLoaded;
+        SceneManager.sceneUnloaded += OnSceneUnloaded;
         TryCacheReferences();
 
         // Auto-connect if ?agent=true is in the URL
@@ -154,6 +162,22 @@ public class AgentBridge : MonoBehaviour
     {
         refsReady = false;
         StartCoroutine(CacheReferencesDelayed());
+    }
+
+    // The recording-mode game-over detector in Update() is gated on
+    // refsReady, which flips false the moment a scene unload starts.
+    // If the player Backs out mid-episode (or the auto-nav fires after
+    // the win panel), no further human_step or human_game_over would
+    // ever reach the Python runner — it'd poll forever and the run
+    // would stay "running" in the dashboard. Fire a terminal event here
+    // so the runner can exit its poll loop even on abnormal exits.
+    void OnSceneUnloaded(Scene scene)
+    {
+        if (!recordingMode) return;
+        if (lastGameOverEmitted) return;
+        if (scene.name != "Level 1 Space for Unity") return;
+        lastGameOverEmitted = true;
+        SendToServer("{\"type\":\"human_game_over\",\"reason\":\"scene_left\"}");
     }
 
     IEnumerator CacheReferencesDelayed()
@@ -334,6 +358,18 @@ public class AgentBridge : MonoBehaviour
                     ExecuteStartGame(cmd);
                     break;
                 case "ping":
+                    SendAck(cmd.seq, true);
+                    break;
+                case "set_recording_mode":
+                    // Flip the bridge into passive recording mode for human
+                    // play. Force pause OFF and time ON so the game runs at
+                    // normal speed for the player.
+                    recordingMode = cmd.recording_mode;
+                    if (recordingMode)
+                    {
+                        pauseBetweenActions = false;
+                        Time.timeScale = 1f;
+                    }
                     SendAck(cmd.seq, true);
                     break;
                 default:
@@ -1385,6 +1421,94 @@ public class AgentBridge : MonoBehaviour
     }
 
     // ------------------------------------------------------------------
+    // Human recording — passive emission on user-initiated actions
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Called by CardFrame / CardDrawer when a human player commits an
+    /// action in the browser (Draw / Move / Merge / Sell). Wraps the
+    /// post-action state in a human_step message tagged with the action ID
+    /// so the Python HumanAgent can persist it in the same events.jsonl
+    /// schema as AI runs. No-op when recordingMode is false, so this is
+    /// safe to call unconditionally from the action sites.
+    ///
+    /// `isDraw` triggers the same draw-ready wait the agent draw path uses
+    /// — the new card spans multiple frames before its dimension components
+    /// resolve, and serializing too early would emit a card with sentinel
+    /// values.
+    /// </summary>
+    public void EmitHumanStep(int actionId, bool isDraw = false)
+    {
+        if (!recordingMode) return;
+        // After the game-over edge has fired (step cap, timer, or mana
+        // zero), refuse to record any further actions even if the UI
+        // manages to slip one through. Otherwise action_count drifts past
+        // maxSteps and the recorded dataset contains actions that
+        // happened after the episode logically ended.
+        if (lastGameOverEmitted) return;
+        // Bump the step counter synchronously so the HUD's step/max text
+        // (polled by GameTimer.Update) updates the same frame the player
+        // acted, and so the Update() loop's stepsOver edge-detect can
+        // actually fire when the player burns through maxSteps. The AI
+        // path increments in ExecuteDrawCard/Move/SellCard right after
+        // the action lands — we mirror that ordering here.
+        IncrementAction();
+        StartCoroutine(EmitHumanStepCoroutine(actionId, isDraw));
+    }
+
+    IEnumerator EmitHumanStepCoroutine(int actionId, bool isDraw)
+    {
+        if (isDraw)
+        {
+            yield return WaitForDrawReady();
+        }
+        else
+        {
+            // Drop animations / synchronous merges settle in 1-2 frames.
+            // Two yields matches SendStateAfterFrames's default.
+            yield return null;
+            yield return null;
+        }
+        SendHumanStep(actionId);
+    }
+
+    void SendHumanStep(int actionId)
+    {
+        if (!refsReady)
+        {
+            // No state to ship. Surface as a soft event so the Python side
+            // can log a missing-step warning without crashing the recording.
+            SendEvent("human_step_missed", new Dictionary<string, object> {
+                { "action", actionId },
+                { "reason", "refs_not_ready" }
+            });
+            return;
+        }
+        try
+        {
+            TryCacheReferences();
+            // SerializeGameState produces a GameStateMsg JSON. We re-tag it
+            // with type="human_step" and inject the action ID so the Python
+            // HumanAgent dispatches it correctly. Cheaper than building a
+            // wrapped DTO and lets the schema stay in lockstep with `state`.
+            string stateJson = SerializeGameState(0);
+            // SerializeGameState emits {"seq":0,"type":"state",...}. Swap the
+            // type, splice in the action.
+            string patched = stateJson
+                .Replace("\"type\":\"state\"", "\"type\":\"human_step\",\"action\":" + actionId);
+            SendToServer(patched);
+        }
+        catch (System.Exception e)
+        {
+            Debug.Log("[AgentBridge] ERROR: human_step serialize failed: " + e);
+            SendEvent("human_step_missed", new Dictionary<string, object> {
+                { "action", actionId },
+                { "reason", "serialize_failed" }
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Slot position data (for motor noise computation on Python side)
     // ------------------------------------------------------------------
 
@@ -1408,6 +1532,12 @@ public class AgentBridge : MonoBehaviour
     // Auto-connect on startup (reads URL from query string)
     // ------------------------------------------------------------------
 
+    // Edge-detect for game_over while in recording mode: timer expiry can
+    // end a human session with no user action to attach a human_step to,
+    // and we don't want HumanAgent to poll for it. One emit on the rising
+    // edge is enough; reset when refsReady flips back (new scene).
+    bool lastGameOverEmitted = false;
+
     void Update()
     {
         // Auto-connect logic runs once
@@ -1415,11 +1545,67 @@ public class AgentBridge : MonoBehaviour
         {
             ConnectToServer(agentServerUrl);
         }
+
+        if (recordingMode && refsReady)
+        {
+            bool timerOver = false;
+            bool stepsOver = false;
+            if (gameTimer != null)
+            {
+                timerOver = gameTimer.triggeredLevelFinished ||
+                    (levelController != null && levelController.gameFinished);
+                stepsOver = maxSteps > 0 && actionCount >= maxSteps;
+            }
+            bool gameOver = timerOver || stepsOver;
+
+            if (gameOver && !lastGameOverEmitted)
+            {
+                lastGameOverEmitted = true;
+                // If we got here via the step cap (not the timer / mana-zero
+                // path), the canonical game-end flow hasn't run yet — the
+                // player can keep dragging cards. Invoke LevelTimerFinished
+                // so the win panel appears and CardFrame/CardDrawer stop
+                // accepting new drops, matching how mana-zero ends the
+                // game. Guarded by the timerOver check so we don't double-
+                // trigger when the timer already fired it.
+                if (stepsOver && !timerOver && levelController != null)
+                {
+                    // LevelTimerFinished sets gameFinished =
+                    // gameTimer.ReturnTimerFinished(), which is always
+                    // false in step-based mode (GameTimer.timerFinished
+                    // is only updated by the legacy wall-clock branch).
+                    // Force it true first so the game-over flag actually
+                    // propagates through LevelController.gameFinished.
+                    if (gameTimer != null) gameTimer.ForceFinished();
+                    try { levelController.LevelTimerFinished(); }
+                    catch (System.Exception e)
+                    {
+                        Debug.Log("[AgentBridge] WARN: LevelTimerFinished threw at step cap: " + e.Message);
+                    }
+                    // Stop further Space-key draws. CardDrawer doesn't
+                    // listen to gameTimer.gamePaused, so without this the
+                    // player could keep drawing cards under the win panel.
+                    if (cardDrawer != null)
+                        cardDrawer.haltCardDraw = true;
+                }
+                // Emit as a typed message (not via SendEvent, which wraps
+                // it as {"type":"event","name":"human_game_over"}). The
+                // Python runner's poll filter matches on `type`, and a
+                // wrapped event would be ignored — leaving the recorder
+                // stuck polling forever.
+                SendToServer("{\"type\":\"human_game_over\"}");
+            }
+            else if (!gameOver)
+            {
+                lastGameOverEmitted = false;
+            }
+        }
     }
 
     void OnDestroy()
     {
         SceneManager.sceneLoaded -= OnSceneLoaded;
+        SceneManager.sceneUnloaded -= OnSceneUnloaded;
     }
 
     // ------------------------------------------------------------------
@@ -1461,6 +1647,9 @@ public class AgentBridge : MonoBehaviour
         // memory ablation: when true, the bridge ships card values + previews
         // even for hidden cards. Default false (Memory dimension is real).
         public bool perfect_memory;
+        // set_recording_mode: when true, bridge enters passive recording mode
+        // and emits human_step messages on user-initiated actions.
+        public bool recording_mode;
     }
 
     [System.Serializable]

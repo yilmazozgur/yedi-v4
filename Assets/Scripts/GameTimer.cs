@@ -53,6 +53,16 @@ public class GameTimer : MonoBehaviour {
         return timerFinished;
     }
 
+    // In step-limited (benchmark / human-recording) mode the wall-clock
+    // countdown never runs, so `timerFinished` stays false forever.
+    // AgentBridge calls this on the step-cap edge so LevelTimerFinished's
+    // `gameFinished = gameTimer.ReturnTimerFinished()` resolves to true,
+    // propagating the game-over state to the rest of the scene.
+    public void ForceFinished()
+    {
+        timerFinished = true;
+    }
+
     public void TopUpTime()
     {
         totalTime = 0f;

@@ -121,6 +121,11 @@ def test_agent(
         return AgentTestResult(success=True, message="Random agent (no provider to test)")
     if agent.provider == "greedy":
         return AgentTestResult(success=True, message="Greedy agent (no provider to test)")
+    if agent.provider == "human":
+        return AgentTestResult(
+            success=True,
+            message="Human recorder — play the game in the browser when a run starts.",
+        )
 
     # Ollama: auto-pull the model before testing connectivity.
     if agent.provider == "ollama" and agent.model:

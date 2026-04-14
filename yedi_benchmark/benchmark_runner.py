@@ -30,7 +30,7 @@ from typing import Optional
 
 import numpy as np
 
-from .yedi_env import YediEnv, BridgeDisconnectedError, action_to_command
+from .yedi_env import YediEnv, BridgeDisconnectedError, action_to_command, INITIAL_MANA
 from .yedi_vlm_env import YediVLMEnv
 from .replay_logger import ReplayLogger
 from .benchmark_configs import TIERS, ALL_BENCHMARKS
@@ -125,6 +125,10 @@ def create_agent_from_registry(
     if agent_cfg.provider == "greedy":
         return GreedyAgent(name=agent_cfg.name)
 
+    if agent_cfg.provider == "human":
+        from .agents.human_agent import HumanAgent
+        return HumanAgent(name=agent_cfg.name)
+
     from .providers.registry import create_provider
     from .agents.llm_agent import LLMAgent
 
@@ -152,6 +156,225 @@ def create_agent_from_registry(
     )
 
 
+def _ws_url_to_http_base(server_url: str) -> str:
+    """Derive the HTTP base URL (scheme + host) from the agent WebSocket URL.
+
+    The bridge exposes ``/api/agent/events`` on the same FastAPI process
+    that serves ``/ws/agent``, so we just swap the scheme and strip the
+    path. Used by the human recorder to drain queued bridge events.
+    """
+    from urllib.parse import urlparse, urlunparse
+    parsed = urlparse(server_url)
+    scheme = "https" if parsed.scheme == "wss" else "http"
+    return urlunparse((scheme, parsed.netloc, "", "", "", ""))
+
+
+def _drain_agent_events(http_base: str, timeout: float = 5.0) -> list:
+    """Pull queued bridge events from /api/agent/events. Returns [] on error."""
+    import urllib.request
+    import urllib.error
+    try:
+        with urllib.request.urlopen(
+            f"{http_base}/api/agent/events", timeout=timeout
+        ) as resp:
+            return json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+        logger.warning("agent_events poll failed: %s", e)
+        return []
+
+
+def _bridge_alive(http_base: str, timeout: float = 2.0) -> bool:
+    """Return True if both game and agent WebSockets are up server-side.
+
+    The human recorder polls /api/agent/events over HTTP, which returns []
+    whenever ``agent_connection`` is None on the server. If either side of
+    the bridge has died — browser tab closed, agent WS reaped — the poll
+    loop would otherwise spin forever waiting for events that can never
+    arrive. This check lets the loop exit with a synthetic game_over.
+    """
+    import urllib.request
+    import urllib.error
+    try:
+        with urllib.request.urlopen(
+            f"{http_base}/api/bridge/status", timeout=timeout
+        ) as resp:
+            status = json.loads(resp.read().decode())
+            return bool(status.get("game_connected")) and bool(
+                status.get("agent_connected")
+            )
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return False
+
+
+def _run_episode_human(
+    env,
+    agent,
+    replay_logger=None,
+    max_steps: int = 200,
+    cancel_event=None,
+    poll_interval: float = 0.25,
+) -> dict:
+    """Record a single episode of live human play.
+
+    Bypasses the act/step loop. Instead:
+      1. ``env.reset()`` boots a fresh game in the browser.
+      2. The bridge is flipped into ``recordingMode`` so every drag/draw
+         the player performs emits a ``human_step`` event.
+      3. We poll ``/api/agent/events`` until ``human_game_over`` arrives
+         (or the bridge state flips ``game_over=True``, or the player
+         hits ``max_steps``).
+      4. Each ``human_step`` is written through ReplayLogger using the
+         exact same schema as an AI episode — that's the whole point: the
+         resulting ``events.jsonl`` is the training data.
+    """
+    agent.reset()
+    obs, info = env.reset()
+
+    if replay_logger:
+        replay_logger.start_episode(
+            config=env.game_config,
+            agent_name=agent.name,
+        )
+
+    http_base = _ws_url_to_http_base(env.server_url)
+
+    # Drain anything that was queued before we reset (e.g. stale
+    # human_step events from a previous browser session).
+    _drain_agent_events(http_base)
+
+    env._send_command({"type": "set_recording_mode", "recording_mode": True})
+    logger.info(
+        "  Recording human play. Drag cards in the browser; "
+        "the run ends when mana hits 0 or step %d is reached.",
+        max_steps,
+    )
+
+    total_reward = 0.0
+    step = 0
+    terminated = False
+    last_state = info.get("raw_state", {}) or {}
+    prev_mana = float(last_state.get("mana", INITIAL_MANA) or INITIAL_MANA)
+    prev_mana_max = float(last_state.get("mana_max", prev_mana) or prev_mana)
+    # Check bridge liveness every N polls (not every iteration — the status
+    # HTTP call is cheap but still adds up at 4 Hz polling).
+    bridge_check_interval = 8  # ~2 s at 250 ms poll_interval
+    since_bridge_check = 0
+
+    try:
+        while step < max_steps:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RunCancelled("run cancelled by user")
+
+            events = _drain_agent_events(http_base)
+            for ev in events:
+                etype = ev.get("type", "")
+                # Older bridges wrap named events as
+                # {"type":"event","name":"human_game_over"}; normalise so
+                # either form terminates the loop.
+                if etype == "event" and ev.get("name", "").startswith("human_"):
+                    etype = ev["name"]
+                if etype == "human_step":
+                    action = int(ev.get("action", -1))
+                    if action < 0:
+                        continue
+                    command = action_to_command(action)
+                    # The bridge serializes the post-action state into
+                    # the same fields as a normal "state" message, so we
+                    # can feed it straight through _state_to_obs.
+                    obs = env._state_to_obs(ev)
+
+                    mana = float(ev.get("mana", prev_mana) or prev_mana)
+                    mana_max = float(ev.get("mana_max", prev_mana_max) or prev_mana_max)
+                    reward = (mana - prev_mana) / 100.0
+                    if mana_max > prev_mana_max:
+                        reward += 0.1
+                    if ev.get("game_over", False) and mana <= 0:
+                        reward -= 1.0
+                    total_reward += reward
+
+                    terminated = bool(ev.get("game_over", False))
+                    info = {
+                        "raw_state": ev,
+                        "max_mana": mana_max,
+                        "surplus": mana_max - INITIAL_MANA,
+                        "step": step + 1,
+                    }
+
+                    if replay_logger:
+                        replay_logger.log_step(
+                            action=action,
+                            command=command,
+                            observation=obs,
+                            reward=reward,
+                            terminated=terminated,
+                            truncated=False,
+                            info=info,
+                            fallback_reason=None,
+                            raw_state=ev,
+                        )
+
+                    prev_mana = mana
+                    prev_mana_max = mana_max
+                    last_state = ev
+                    step += 1
+                    if terminated or step >= max_steps:
+                        break
+
+                elif etype == "human_game_over":
+                    terminated = True
+
+                elif etype == "human_step_missed":
+                    logger.warning(
+                        "  human_step_missed: action=%s reason=%s",
+                        ev.get("action"), ev.get("reason"),
+                    )
+
+            if terminated:
+                break
+
+            # Liveness probe: if the bridge is down, no events can ever
+            # arrive — exit with a synthetic terminal state rather than
+            # hanging the run forever.
+            since_bridge_check += 1
+            if since_bridge_check >= bridge_check_interval:
+                since_bridge_check = 0
+                if not _bridge_alive(http_base):
+                    logger.warning(
+                        "  bridge disconnected mid-recording — ending episode "
+                        "(logged %d steps)", step,
+                    )
+                    terminated = True
+                    break
+
+            time.sleep(poll_interval)
+    finally:
+        try:
+            env._send_command({"type": "set_recording_mode", "recording_mode": False})
+        except Exception:  # pragma: no cover — best-effort cleanup
+            logger.exception("failed to clear recording_mode; ignoring")
+
+        if replay_logger:
+            replay_logger.end_episode(last_state)
+
+    return {
+        "max_mana": prev_mana_max,
+        "surplus": prev_mana_max - INITIAL_MANA,
+        "total_reward": total_reward,
+        "steps": step,
+        "game_over": terminated,
+        "diagnostics": {
+            "wasted_draws": 0,
+            "merge_tiers_chosen": {},
+            "sell_by_merges": {},
+            "previews_available": 0,
+            "previews_followed": 0,
+            "mana_trajectory": [],
+            "merge_details": [],
+        },
+        "episode_log_path": str(replay_logger.episode_dir) if replay_logger and replay_logger.episode_dir else None,
+    }
+
+
 def run_episode(
     env,
     agent,
@@ -167,6 +390,13 @@ def run_episode(
             UI can interrupt a long-running episode within a step boundary
             instead of having to wait for the whole episode to finish.
     """
+    if getattr(agent, "is_human", False):
+        return _run_episode_human(
+            env, agent, replay_logger,
+            max_steps=max_steps,
+            cancel_event=cancel_event,
+        )
+
     agent.reset()
     obs, info = env.reset()
 

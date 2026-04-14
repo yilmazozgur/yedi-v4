@@ -55,6 +55,17 @@
             </div>
         </div>
 
+        <div class="form-row" id="b-human-note" style="display:none; margin-top: 12px;">
+            <p class="card-sub">
+                <strong>Human recording run.</strong>
+                Once the run starts, switch to the <a href="/game">Game tab</a>
+                and play normally — every Draw, Move, Merge and Sell is
+                captured into the same <code>events.jsonl</code> schema as AI
+                runs. The episode ends when mana hits 0 or the step cap is
+                reached.
+            </p>
+        </div>
+
         <div class="form-actions">
             <span class="dim mono" id="b-launch-hint"></span>
             <button type="submit" class="btn btn-primary" id="b-launch">Launch run</button>
@@ -80,19 +91,30 @@
 
     let allConfigs = {};
     let tiers = {};
+    let agentsById = {};
 
     async function loadAgents() {
         const sel = document.getElementById("b-agent");
         try {
             const agents = await api.get("/api/agents");
             clear(sel);
+            agentsById = {};
             for (const a of agents) {
+                agentsById[a.id] = a;
                 const opt = document.createElement("option");
                 opt.value = a.id;
                 opt.textContent = `${a.name} (${a.provider}/${a.model || "—"})`;
                 sel.appendChild(opt);
             }
+            applyHumanNote();
         } catch (e) { toastError(e); }
+    }
+
+    function applyHumanNote() {
+        const agentId = document.getElementById("b-agent").value;
+        const agent = agentsById[agentId];
+        const isHuman = !!(agent && agent.provider === "human");
+        document.getElementById("b-human-note").style.display = isHuman ? "" : "none";
     }
 
     async function loadConfigs() {
@@ -175,6 +197,7 @@
         }
     }
     document.getElementById("b-mode").addEventListener("change", applyVisionLock);
+    document.getElementById("b-agent").addEventListener("change", applyHumanNote);
 
     document.getElementById("bench-form").addEventListener("submit", async (ev) => {
         ev.preventDefault();

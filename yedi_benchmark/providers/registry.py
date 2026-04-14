@@ -21,7 +21,7 @@ from .litellm_provider import LiteLLMProvider
 # RandomAgent / GreedyAgent directly.
 SUPPORTED_PROVIDERS = [
     "anthropic", "openai", "google", "together", "ollama", "custom",
-    "random", "greedy",
+    "random", "greedy", "human",
 ]
 
 
@@ -97,6 +97,7 @@ DEFAULT_MODELS: dict[str, list[str]] = {
     "custom": [],
     "random": [],
     "greedy": [],
+    "human": [],
 }
 
 
@@ -240,6 +241,8 @@ def smoke_test_agent(agent_cfg, timeout: float = 30.0) -> tuple[bool, str]:
     provider = getattr(agent_cfg, "provider", None)
     if provider in ("random", "greedy"):
         return True, f"{provider} baseline (no provider to test)"
+    if provider == "human":
+        return True, "human recorder (passive, no provider to test)"
 
     # Ollama: auto-pull the model if it isn't available locally yet.
     if provider == "ollama":
@@ -292,6 +295,8 @@ def create_provider(
         raise ProviderError("random is not an LLM provider — use RandomAgent directly")
     if provider == "greedy":
         raise ProviderError("greedy is not an LLM provider — use GreedyAgent directly")
+    if provider == "human":
+        raise ProviderError("human is not an LLM provider — use HumanAgent directly")
     if provider not in SUPPORTED_PROVIDERS:
         raise ProviderError(f"Unknown provider: {provider}")
 
