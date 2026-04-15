@@ -151,6 +151,21 @@ Strategy: drive slots up to neutral via GREAT merges, then chain
 neutral+neutral pairs for PERFECT merges. Each PERFECT multiplies card_mana
 by 2.5×, so value grows exponentially.
 
+============ MERGE PREVIEWS — READ THESE FIRST ============
+
+When merge previews are shown in the turn state, they are PRE-COMPUTED by the
+game engine, per dimension, per legal candidate. They are ALWAYS CORRECT and
+strictly more reliable than you computing tiers from raw card values.
+
+Decision procedure when previews are present:
+   1. Scan every "a<N> src→dst: ..." preview row.
+   2. For each row, take the MINIMUM multiplier across active dims.
+   3. Pick the row with the highest minimum. If that minimum ≥ 1.5× → take it.
+   4. Else fall through to the hierarchy below (park / sell / draw).
+
+Do NOT second-guess the previews or re-derive tiers from card values. If a
+preview says "Number BAD ×0.9", the merge is bad. Trust it.
+
 ============ DECISION PRIORITY (when "new" is occupied) ============
 
 Ranked best-to-worst:
@@ -158,18 +173,49 @@ Ranked best-to-worst:
       (this is the only merge that actually compounds score)
    B. PLACE "new" into an EMPTY build slot
       (preserves card_mana and keeps future merge options open)
-   C. SELL "new"
-      (recovers ~90% of draw cost — strictly better than option D)
+   C. SELL "new"  — ONLY if ALL 5 build slots are occupied AND no ≥1.5× merge
+      exists. While ANY build slot is empty, parking (B) is strictly better.
    D. FORCE a bad merge into a built slot
       (NEVER — destroys both the new card AND the slot you built up)
 
-Option D looks like "making progress" but is strictly worse than C. Selling
-the new card loses the 10% draw overhead; a bad merge loses the full card
-AND degrades a slot.
+Selling "new" while a build slot is empty is a rule violation, not a
+last-resort option. If you ever pick SELL new (action 31), verify first:
+slots 1, 2, 3, 4, 5 are ALL occupied. Otherwise park.
 
 Never move a card slot→slot (actions 6..30) unless it triggers a ≥1.5× merge
 on every active dim. Unproductive board shuffles incur a FLAT 5-mana penalty
 on your bank in addition to burning a move and the drain tick.
+
+============ SELL TIMING — DON'T PANIC-SELL ============
+
+Your mana bank WILL drop during a build. Drain + draw costs are paid in the
+present; the payoff lands at SELL. A normal good-play trajectory looks like
+mana 200 → 150 → 130 (three draws, some parks, building two slots) → 230
+(sell a 2-merge card) → 180 (two more draws) → 330 (sell a 3-merge card).
+A 30-50 mana drawdown mid-build is EXPECTED and correct.
+
+Sell-readiness ladder (card_mana on a card with N merges done, 1 active dim):
+   0 merges (fresh card) :  ~9 mana — selling nets you the draw cost back.
+   1 merge  (after GREAT):  ~18 mana — minimal net gain vs. drawing again.
+   2 merges (after GREAT):  ~36 mana — real gain, but chain one more.
+   3 merges (after GREAT):  ~72 mana — CAPPED, must sell.
+   3 merges (PERFECT path): ~141 mana — the actual jackpot sell.
+
+Rules:
+   - NEVER sell a 0-merge slot while ANY build slot is empty. A 0-merge card
+     has no edge over its draw cost — you're just paying the drain tick to
+     cycle. Park it instead.
+   - A 1-merge card: sell ONLY if no 1.5× merge partner exists on the board
+     AND no empty slot can park a fresh draw-then-build cycle.
+   - A 2-merge card: prefer to chain ONE more merge before selling. A 2→3
+     step at 1.5× doubles the sell value; a 3-merge cap is worth 4× a 0-merge
+     sell.
+   - A 3-merge card: SELL immediately. It cannot grow further; holding it
+     just drains mana.
+
+Bank-hit rescue: if mana drops below ~80 and no slot is near the 3-cap, sell
+the HIGHEST-card_mana slot (even if only 1-2 merges) to stabilise. Don't sell
+the smallest — that trades 9 mana for a lost move.
 
 ============ TURN CHECKLIST ============
 
@@ -198,7 +244,38 @@ every step, memory of prior turns is unreliable. Then:
   5. Averaging multi-dim multipliers: the WORST dim bounds the outcome. One
      BAD dim kills a multi-dim merge, no matter how good the others are.
   6. Slot-to-slot shuffles: moving between build slots without triggering a
-     merge burns a move AND costs a flat 5-mana bank penalty.\
+     merge burns a move AND costs a flat 5-mana bank penalty.
+  7. Panic-selling during a drawdown: mana WILL dip 30-50 during a build. A
+     0-merge or 1-merge slot is not a sell target — it's an unfinished build.
+
+============ WORKED TRAJECTORY (math:add, 1 active dim) ============
+
+This is the shape of a good opening. Action IDs shown for clarity.
+
+  Turn 1  state: new empty, all slots empty                 → 0       (draw)
+  Turn 2  state: new=Num+3, slot1..5 empty                   → 1       (park new→1)
+  Turn 3  state: new empty, slot1=Num+3                      → 0       (draw)
+  Turn 4  state: new=Num+2, slot1=Num+3                      → 2       (park new→2)
+  Turn 5  state: new empty, slot1=3 slot2=2                  → 0       (draw)
+  Turn 6  state: new=Num-3, slot1=3 slot2=2
+          preview a1 new→1: Number GREAT ×2.0 (sum=0)         → 1       (merge, slot1→neutral, 1 merge, mana≈18)
+  Turn 7  state: new empty, slot1=0 (1 merge) slot2=2        → 0       (draw)
+  Turn 8  state: new=Num+1, slot1=0 slot2=2
+          preview a2 new→2: Number GOOD ×1.5 (|sum|=1)        → 2       (merge, slot2→3, 1 merge)
+  Turn 9  state: new empty, slot1=0/1m slot2=3/1m            → 0       (draw)
+  Turn 10 state: new=Num-3, slot1=0/1m slot2=3/1m
+          preview a2 new→2: Number GREAT ×2.0 (sum=0)         → 2       (merge, slot2→0, 2 merges, mana≈36)
+  Turn 11 state: new empty, slot1=0/1m slot2=0/2m            → 0       (draw)
+  Turn 12 state: new=Num+0, slot1=0/1m slot2=0/2m
+          preview a1 new→1: Number PERFECT ×2.5 (both 0)      → 1       (merge, slot1=0/2m, mana≈23)
+  ...continue chaining neutrals until a slot reaches 3 merges, then SELL.
+  A 3-merge PERFECT-chained slot sells for ~141 mana in 1-dim mode.
+
+KEY PATTERNS in that trajectory:
+  - First three moves = draw, park, draw, park, draw. Spread across slots.
+  - NEVER sold a 0-merge card. Every sell (not shown) happens at 3-merge cap.
+  - Chose merges only when the preview confirmed ≥1.5×. Skipped everything else.
+  - Held neutrals (Num=0) in parallel slots to reach the 2.5× PERFECT.\
 """
 
 # Per-dimension merge rules, keyed by (dimension_field, mode_value).
@@ -834,20 +911,28 @@ def build_system_prompt(
     parts.append("")
     parts.append("RESPONSE FORMAT")
     parts.append(
-        "You may write a SHORT line of reasoning (one or two sentences max) "
-        "describing the candidate merges you considered and why you picked one. "
-        "Then output your final choice on a NEW line in the exact form:\n"
+        "Output exactly two lines: first a GOAL line committing to a multi-step\n"
+        "intent, then an ACTION line with the integer you chose THIS turn:\n"
+        "    GOAL: <one sentence — what you are building toward>\n"
         "    ACTION: <integer>\n"
-        "where <integer> is one of the action IDs from the 'Valid actions:' list "
-        "in the user message. The parser looks for the ACTION: marker first; if "
-        "it's missing, it falls back to scanning the last line for an integer. "
-        "Examples of valid replies:\n"
-        "    ACTION: 0\n"
-        "    Slot 3 has Num=2, new is Num=-2 → sum 0, ×2.0. Best option.\n"
-        "    ACTION: 19\n"
-        "Do NOT wrap the action ID in code fences or quotes. Do NOT output more "
-        "than one ACTION: line. Keep the reasoning brief — long explanations "
-        "burn tokens and slow the run."
+        "\n"
+        "The GOAL line forces multi-turn planning: name the slot you are\n"
+        "growing, the merge you are waiting for, or the sell you are setting\n"
+        "up. Good goals: \"grow slot 2 to 3 merges then sell\", \"hold Num=0 in\n"
+        "slot 1, wait for another Num=0 to pair for PERFECT\", \"bank low,\n"
+        "sell slot 4 (highest mana) to stabilise\". Bad goals: \"pick best\n"
+        "action\", \"do something useful\" — these don't commit to anything.\n"
+        "\n"
+        "The ACTION line must be one of the IDs from the 'Valid actions:' list.\n"
+        "The parser looks for 'ACTION: N' first; a stray integer elsewhere is\n"
+        "ignored, so keep your reasoning above the GOAL line if you need any.\n"
+        "\n"
+        "Example reply:\n"
+        "    GOAL: grow slot 2 (Num=0, 1 merge) by pairing another Num=0\n"
+        "    ACTION: 7\n"
+        "\n"
+        "Do NOT wrap the action ID in code fences or quotes. Do NOT output\n"
+        "more than one ACTION line. Keep it tight — extra text burns tokens."
     )
 
     return "\n\n".join(parts)
@@ -1023,6 +1108,18 @@ def describe_state(
         lines.append("Valid actions:")
         for a in sorted(valid):
             lines.append(f"  {a}: {_describe_action(a)}")
+
+    # Per-turn CHECK reminder — re-primes the hierarchy at the point of
+    # decision so it survives context decay across long episodes. Kept short
+    # on purpose (three lines): long reminders lose their signal.
+    if not raw_state.get("game_over", False):
+        lines.append("")
+        lines.append("CHECK before you answer:")
+        lines.append("  1. Any build slot at 3 merges? → SELL it (32..36).")
+        lines.append("  2. \"new\" occupied? → ≥1.5× merge; else park empty slot; "
+                     "sell \"new\" ONLY if slots 1-5 are ALL occupied.")
+        lines.append("  3. Otherwise DRAW (0). Do not sell a 0-merge slot while "
+                     "any build slot is empty — that's a panic-sell.")
 
     if raw_state.get("game_over", False):
         lines.append(f"\nGAME OVER — Final max mana: {mana_max:.0f}")

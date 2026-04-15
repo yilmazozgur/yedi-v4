@@ -128,6 +128,42 @@ class TestBuildSystemPrompt:
         for (field, mode), rule in DIMENSION_RULES.items():
             assert prompt.dimension_rules[f"{field}:{mode}"] == rule
 
+    def test_response_format_requires_goal_and_action(self):
+        """The structured two-line response format (GOAL + ACTION) must be
+        present in the system prompt so the model knows to emit both."""
+        out = build_system_prompt({"number": "add"})
+        assert "GOAL:" in out
+        assert "ACTION:" in out
+
+    def test_core_rules_carries_sell_timing_discipline(self):
+        """The 'don't panic-sell during drawdown' framing must ship in the
+        system prompt — it's the single largest lever identified from the
+        gpt-oss-20b trace (43% of sells were 0-merge dumps)."""
+        out = build_system_prompt({"number": "add"})
+        assert "SELL TIMING" in out
+        assert "panic" in out.lower()
+
+    def test_core_rules_has_worked_trajectory(self):
+        """A concrete turn-by-turn trajectory gives weak models a learned
+        pattern for depth-3 play — abstract rules alone were not enough."""
+        out = build_system_prompt({"number": "add"})
+        assert "WORKED TRAJECTORY" in out
+        # A couple of the specific action IDs from the example
+        assert "Turn 1" in out and "Turn 10" in out
+
+    def test_registry_filters_dimension_rules_by_active_modes(self):
+        """Inactive dims must NOT have their rule text in the assembled prompt
+        — this is what keeps the prompt small per-config and stops cross-dim
+        text from diluting the active rules."""
+        prompt = get_default_prompt()
+        out = build_system_prompt({"number": "add"}, prompt=prompt)
+        # color:add rule text has a distinctive "VISUAL" header; ensure it's absent
+        leaked = prompt.dimension_rules.get("color:add", "")
+        assert leaked
+        # pick an opening phrase long enough to be unique
+        phrase = leaked.strip().split("\n", 1)[0]
+        assert phrase not in out, f"inactive color:add rule leaked into output"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # describe_state
@@ -857,8 +893,14 @@ class TestVisionLeakGuards:
         assert "ground truth" in out
 
     def test_build_system_prompt_omits_merge_preview_when_disabled(self):
+        """The extended preview instructions block (the one describing the
+        per-turn 'a<N> src→dst' preview rows) is only appended when the
+        ablation is on. The generic 'read previews first' primer lives in
+        core_rules and is always present — we assert the *detailed* block
+        is absent, not the heading."""
         out = build_system_prompt({"number": "add"})
-        assert "MERGE PREVIEWS" not in out
+        assert "DO NOT try to compute merge quality yourself" not in out
+        assert "ground truth" not in out
 
     def test_llm_agent_vision_compact_no_attribute_leak(self):
         """End-to-end: a vision + compact LLMAgent's outgoing user text must
