@@ -851,6 +851,7 @@ class TestGameWebSocketVisibilityRoute:
         class _RecordingAgent:
             connected = True
             pending_responses: dict = {}
+            recording_mode = False
 
             def on_game_message(self, msg):
                 forwarded.append(msg)

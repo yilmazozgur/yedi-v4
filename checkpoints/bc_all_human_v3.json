@@ -1,0 +1,19 @@
+{
+  "checkpoint_version": 3,
+  "obs_dim": 543,
+  "num_actions": 37,
+  "best_eval_acc": 0.34798534798534797,
+  "train_seconds": 2.7539994716644287,
+  "train_rows": 1251,
+  "eval_rows": 273,
+  "sources": {
+    "human": 1524
+  },
+  "epochs": 40,
+  "history": "[40 entries]",
+  "config_vocab": {
+    "math:add": 1,
+    "spatial:triangle": 2,
+    "visual:add": 3
+  }
+}

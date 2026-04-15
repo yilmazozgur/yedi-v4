@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from ..learning.dataset import OBS_DIM
+from ..learning.dataset import OBS_DIM, UNK_CONFIG_ID
 from ..learning.featurizer import (
     NUM_ACTIONS,
     NUM_SLOTS,
@@ -23,6 +23,7 @@ from ..learning.featurizer import (
     _slot_features,
     hash_word,
     parse_active_dimensions,
+    parse_sub_modes,
 )
 from ..learning.model import BCModelConfig, BCPolicy
 from .base_agent import BaseAgent
@@ -53,7 +54,8 @@ def _featurize_live(raw_state: dict) -> np.ndarray:
     slots = np.concatenate(slot_vecs)
     word_hash = np.concatenate(word_vecs)
     dims_active = parse_active_dimensions(raw_state.get("config_key"))
-    feats = np.concatenate([scalars, slots, word_hash, dims_active])
+    sub_modes = parse_sub_modes(raw_state.get("config_key"))
+    feats = np.concatenate([scalars, slots, word_hash, dims_active, sub_modes])
     assert feats.shape == (OBS_DIM,), f"feature dim drift: {feats.shape} vs {OBS_DIM}"
     return feats
 
@@ -95,6 +97,11 @@ class BehaviorCloningAgent(BaseAgent):
         self._model.load_state_dict(ckpt["state_dict"])
         self._model.eval()
         self.summary = summary
+        # Vocab stored as ``config_key -> id`` so live lookups stay O(1).
+        # Missing from v2-and-earlier checkpoints → empty dict → everything
+        # resolves to UNK, which is the correct behaviour for models that
+        # weren't trained with a config embedding at all.
+        self._config_vocab: dict[str, int] = dict(ckpt.get("config_vocab", {}) or {})
 
     def act(self, observation: dict, info: dict = None) -> int:
         torch = self._torch
@@ -111,10 +118,14 @@ class BehaviorCloningAgent(BaseAgent):
                     mask_arr[a] = 1.0
         mask = np.asarray(mask_arr, dtype=np.float32)
 
+        cfg_key = str(raw.get("config_key", "") or "")
+        cfg_id = self._config_vocab.get(cfg_key, UNK_CONFIG_ID)
+
         with torch.no_grad():
             f = torch.from_numpy(feats).unsqueeze(0).to(self._device)
             m = torch.from_numpy(mask).unsqueeze(0).to(self._device)
-            logits = self._model(f, m)
+            c = torch.tensor([cfg_id], dtype=torch.long, device=self._device)
+            logits = self._model(f, mask=m, config_id=c)
             action = int(logits.argmax(dim=1).item())
 
         # Defensive fallback: if the mask was empty (no valid actions),

@@ -19,6 +19,8 @@ from yedi_benchmark.providers.registry import (
     create_provider,
     resolve_api_key,
     smoke_test_agent,
+    validate_bc_checkpoint,
+    validate_dt_checkpoint,
 )
 from yedi_benchmark.registries.models import AgentConfig
 
@@ -530,6 +532,130 @@ class TestLiteLLMProviderRateLimitRetry:
         # Exactly one sleep call (the first backoff slot), one chunk worth.
         assert mock_sleep.call_count == 1
         assert mock_sleep.call_args.args[0] == 30.0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BC pseudo-provider — checkpoint-path validation and registry wiring
+#
+# BC agents sit in the provider registry as a pseudo-provider so the Add-Agent
+# UI can create them alongside LLM agents. The `model` field holds a path to a
+# trained .pt checkpoint. create_provider refuses to build an LLMProvider for
+# "bc" (the runner routes it to BehaviorCloningAgent directly); smoke_test_agent
+# short-circuits through validate_bc_checkpoint so a bad path fails fast at
+# agent-create/test time rather than on the first act() call mid-run.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestBCProvider:
+    def test_in_supported_providers(self):
+        assert "bc" in SUPPORTED_PROVIDERS
+
+    def test_defaults_are_empty(self):
+        # BC has no curated model menu, no API key, no base URL — the
+        # `model` field carries a filesystem path instead.
+        assert DEFAULT_MODELS["bc"] == []
+        assert DEFAULT_API_KEY_ENVS["bc"] == ""
+        assert DEFAULT_BASE_URLS["bc"] == ""
+
+    def test_create_provider_rejected(self):
+        with pytest.raises(ProviderError, match="bc is not"):
+            create_provider("bc", "/tmp/ckpt.pt")
+
+    def test_validate_missing_path(self):
+        ok, msg = validate_bc_checkpoint(None)
+        assert ok is False
+        assert "checkpoint" in msg.lower()
+
+    def test_validate_empty_path(self):
+        ok, msg = validate_bc_checkpoint("")
+        assert ok is False
+
+    def test_validate_nonexistent_path(self, tmp_path):
+        ok, msg = validate_bc_checkpoint(str(tmp_path / "nope.pt"))
+        assert ok is False
+        assert "not found" in msg.lower()
+
+    def test_validate_wrong_extension(self, tmp_path):
+        p = tmp_path / "model.bin"
+        p.write_bytes(b"x")
+        ok, msg = validate_bc_checkpoint(str(p))
+        assert ok is False
+        assert ".pt" in msg
+
+    def test_validate_accepts_pt_file(self, tmp_path):
+        p = tmp_path / "ckpt.pt"
+        p.write_bytes(b"x")
+        ok, msg = validate_bc_checkpoint(str(p))
+        assert ok is True
+
+    def test_smoke_test_routes_through_validator(self, tmp_path):
+        # Existing .pt → ok. Non-existing → failure. No LiteLLM involved.
+        good = tmp_path / "ok.pt"
+        good.write_bytes(b"x")
+        agent_ok = _agent(provider="bc", model=str(good), api_key_env=None)
+        assert smoke_test_agent(agent_ok)[0] is True
+
+        agent_bad = _agent(provider="bc", model=str(tmp_path / "missing.pt"),
+                           api_key_env=None)
+        ok, msg = smoke_test_agent(agent_bad)
+        assert ok is False
+        assert "not found" in msg.lower()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DT pseudo-provider — mirrors the BC block above. Same rationale: DT agents
+# live in the registry/UI like LLM agents, but the `model` field holds a
+# checkpoint path and create_provider refuses to build an LLMProvider for them.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestDTProvider:
+    def test_in_supported_providers(self):
+        assert "dt" in SUPPORTED_PROVIDERS
+
+    def test_defaults_are_empty(self):
+        assert DEFAULT_MODELS["dt"] == []
+        assert DEFAULT_API_KEY_ENVS["dt"] == ""
+        assert DEFAULT_BASE_URLS["dt"] == ""
+
+    def test_create_provider_rejected(self):
+        with pytest.raises(ProviderError, match="dt is not"):
+            create_provider("dt", "/tmp/ckpt.pt")
+
+    def test_validate_missing_path(self):
+        ok, msg = validate_dt_checkpoint(None)
+        assert ok is False
+        assert "checkpoint" in msg.lower()
+
+    def test_validate_nonexistent_path(self, tmp_path):
+        ok, msg = validate_dt_checkpoint(str(tmp_path / "nope.pt"))
+        assert ok is False
+        assert "not found" in msg.lower()
+
+    def test_validate_wrong_extension(self, tmp_path):
+        p = tmp_path / "model.bin"
+        p.write_bytes(b"x")
+        ok, msg = validate_dt_checkpoint(str(p))
+        assert ok is False
+        assert ".pt" in msg
+
+    def test_validate_accepts_pt_file(self, tmp_path):
+        p = tmp_path / "ckpt.pt"
+        p.write_bytes(b"x")
+        ok, msg = validate_dt_checkpoint(str(p))
+        assert ok is True
+
+    def test_smoke_test_routes_through_validator(self, tmp_path):
+        good = tmp_path / "ok.pt"
+        good.write_bytes(b"x")
+        agent_ok = _agent(provider="dt", model=str(good), api_key_env=None)
+        assert smoke_test_agent(agent_ok)[0] is True
+
+        agent_bad = _agent(provider="dt", model=str(tmp_path / "missing.pt"),
+                           api_key_env=None)
+        ok, msg = smoke_test_agent(agent_bad)
+        assert ok is False
+        assert "not found" in msg.lower()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

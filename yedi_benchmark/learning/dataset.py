@@ -29,6 +29,7 @@ from .featurizer import (
     NUM_SLOTS,
     OBS_SCALAR_FIELDS,
     SLOT_FEATURE_DIM,
+    SUB_MODES_DIM,
     WORD_HASH_DIM,
 )
 
@@ -38,11 +39,16 @@ OBS_DIM: int = (
     + NUM_SLOTS * SLOT_FEATURE_DIM
     + NUM_SLOTS * WORD_HASH_DIM
     + DIMENSIONS_DIM
+    + SUB_MODES_DIM
 )
-"""Flat feature-vector width: 4 scalars + 77 slot + 448 word + 7 dims = 536.
+"""Flat feature-vector width: 4 scalars + 77 slot + 448 word + 7 dims + 7 subs = 543.
 
 Layout order must match ``agents.bc_agent._featurize_live`` — any reorder
 is a breaking change that the checkpoint version guard must catch."""
+
+UNK_CONFIG_ID: int = 0
+"""Config-id reserved for 'unknown at training time'. The BC agent falls
+back to this when a checkpoint is asked to play a config it never saw."""
 
 
 _SLOT_BLOCK_OFFSET: int = len(OBS_SCALAR_FIELDS)
@@ -172,6 +178,7 @@ class BCDataset(Dataset):
         masks:    np.ndarray,      # (N, 37)      int8
         episode_ids: np.ndarray,   # (N,)         object
         sources:  np.ndarray,      # (N,)         object
+        config_keys: np.ndarray | None = None,   # (N,) object, per-row config_key
     ):
         assert features.shape[1] == OBS_DIM
         assert masks.shape[1] == NUM_ACTIONS
@@ -180,8 +187,27 @@ class BCDataset(Dataset):
         self.masks = masks
         self.episode_ids = episode_ids
         self.sources = sources
+        self.config_keys = (
+            config_keys if config_keys is not None
+            else np.array([""] * len(actions), dtype=object)
+        )
         self.augment_slot_permutation: bool = False
         self._aug_rng: np.random.Generator | None = None
+        # Populated by ``set_config_vocab`` — until then ``config_ids`` is
+        # all-UNK, which lets the trainer inspect rows before binding a
+        # vocab and lets tests skip the embedding entirely.
+        self.config_ids: np.ndarray = np.full(len(actions), UNK_CONFIG_ID, dtype=np.int64)
+
+    def set_config_vocab(self, vocab: dict[str, int]) -> None:
+        """Bind a ``config_key -> id`` map, materialising ``config_ids``.
+
+        Keys not in ``vocab`` resolve to ``UNK_CONFIG_ID`` so an eval split
+        or a live session on an unseen config still produces a valid id.
+        """
+        self.config_ids = np.array(
+            [vocab.get(str(k), UNK_CONFIG_ID) for k in self.config_keys],
+            dtype=np.int64,
+        )
 
     def enable_slot_permutation(self, seed: int = 0) -> None:
         """Turn on random slot-permutation augmentation for this split.
@@ -195,7 +221,7 @@ class BCDataset(Dataset):
     def __len__(self) -> int:
         return len(self.actions)
 
-    def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         feat = self.features[i].astype(np.float32, copy=False)
         action = int(self.actions[i])
         mask = self.masks[i].astype(np.float32)
@@ -210,6 +236,7 @@ class BCDataset(Dataset):
             torch.tensor(action, dtype=torch.long),
             torch.from_numpy(np.ascontiguousarray(mask)),
             torch.from_numpy(np.ascontiguousarray(equiv)),
+            torch.tensor(int(self.config_ids[i]), dtype=torch.long),
         )
 
 
@@ -254,14 +281,35 @@ def load_parquet(
                                    NUM_SLOTS * WORD_HASH_DIM).astype(np.float32)
     dims_active = _unpack_fixed_list(table.column("dims_active"),
                                      DIMENSIONS_DIM).astype(np.float32)
+    # Backfill for older parquets that predate the sub_modes_active column
+    # — zero-filling keeps OBS_DIM consistent without crashing on legacy
+    # files. New trainers exporting fresh data will always write the column.
+    if "sub_modes_active" in table.column_names:
+        sub_modes = _unpack_fixed_list(table.column("sub_modes_active"),
+                                       SUB_MODES_DIM).astype(np.float32)
+    else:
+        sub_modes = np.zeros((len(table), SUB_MODES_DIM), dtype=np.float32)
     masks     = _unpack_fixed_list(table.column("action_mask"),
                                    NUM_ACTIONS).astype(np.int8)
     actions   = table.column("action").to_numpy(zero_copy_only=False).astype(np.int64)
     episode_ids = np.array(table.column("episode_id").to_pylist(), dtype=object)
     src_arr     = np.array(table.column("agent_source").to_pylist(), dtype=object)
+    config_keys = np.array(table.column("config_key").to_pylist(), dtype=object)
 
-    features = np.concatenate([scalars, slots, word_hash, dims_active], axis=1)
-    return BCDataset(features, actions, masks, episode_ids, src_arr)
+    features = np.concatenate([scalars, slots, word_hash, dims_active, sub_modes], axis=1)
+    return BCDataset(features, actions, masks, episode_ids, src_arr, config_keys=config_keys)
+
+
+def build_config_vocab(ds: BCDataset) -> dict[str, int]:
+    """Assign a stable integer id to each distinct ``config_key`` in ``ds``.
+
+    Index 0 is reserved for ``UNK_CONFIG_ID`` so runtime lookups of an
+    unseen config can't collide with a real row. Sorting the keys first
+    keeps the mapping deterministic across trainer invocations on the
+    same data.
+    """
+    uniq = sorted({str(k) for k in ds.config_keys if str(k)})
+    return {key: i + 1 for i, key in enumerate(uniq)}
 
 
 def split_by_episode(
@@ -286,13 +334,17 @@ def split_by_episode(
     train_mask = ~eval_mask
 
     def _subset(mask: np.ndarray) -> BCDataset:
-        return BCDataset(
+        sub = BCDataset(
             features=ds.features[mask],
             actions=ds.actions[mask],
             masks=ds.masks[mask],
             episode_ids=ds.episode_ids[mask],
             sources=ds.sources[mask],
+            config_keys=ds.config_keys[mask],
         )
+        # Preserve any vocab binding the caller applied before splitting.
+        sub.config_ids = ds.config_ids[mask]
+        return sub
 
     train = _subset(train_mask)
     evl = _subset(eval_mask)
@@ -309,3 +361,65 @@ def split_by_episode(
         sources=sources,
     )
     return train, evl, stats
+
+
+def kfold_split_by_episode(
+    ds: BCDataset,
+    *,
+    k: int,
+    seed: int = 42,
+) -> list[tuple[BCDataset, BCDataset, SplitStats]]:
+    """Partition episodes into k disjoint folds and return all (train, eval, stats) triples.
+
+    Shuffle-then-chunk: episodes are shuffled with ``seed`` so re-runs hit
+    the same folds; ``np.array_split`` produces ``k`` groups whose sizes
+    differ by at most one. Fold ``i``'s eval set is group ``i``; its train
+    set is every other group concatenated.
+
+    ``k`` must be ≤ number of unique episodes. The trainer clamps to
+    leave-one-out above that.
+    """
+    unique_eps = np.unique(ds.episode_ids)
+    if k < 2:
+        raise ValueError(f"k must be ≥2 (got {k}) — use split_by_episode for single-split")
+    if k > len(unique_eps):
+        raise ValueError(
+            f"k={k} exceeds number of episodes ({len(unique_eps)}) — "
+            f"clamp to leave-one-out (k={len(unique_eps)}) before calling"
+        )
+    rng = np.random.default_rng(seed)
+    rng.shuffle(unique_eps)
+    fold_eps = np.array_split(unique_eps, k)
+
+    sources_total: dict[str, int] = {}
+    for s in ds.sources:
+        sources_total[s] = sources_total.get(s, 0) + 1
+
+    def _subset(mask: np.ndarray) -> BCDataset:
+        sub = BCDataset(
+            features=ds.features[mask],
+            actions=ds.actions[mask],
+            masks=ds.masks[mask],
+            episode_ids=ds.episode_ids[mask],
+            sources=ds.sources[mask],
+            config_keys=ds.config_keys[mask],
+        )
+        sub.config_ids = ds.config_ids[mask]
+        return sub
+
+    folds: list[tuple[BCDataset, BCDataset, SplitStats]] = []
+    for i in range(k):
+        eval_eps = set(fold_eps[i].tolist())
+        eval_mask = np.array([eid in eval_eps for eid in ds.episode_ids])
+        train_mask = ~eval_mask
+        train = _subset(train_mask)
+        evl = _subset(eval_mask)
+        stats = SplitStats(
+            num_train_rows=len(train),
+            num_eval_rows=len(evl),
+            num_train_episodes=len(unique_eps) - len(eval_eps),
+            num_eval_episodes=len(eval_eps),
+            sources=sources_total,
+        )
+        folds.append((train, evl, stats))
+    return folds

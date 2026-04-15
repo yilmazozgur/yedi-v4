@@ -21,6 +21,7 @@ of numpy arrays / scalars that a BC trainer can stack into tensors:
         "slots":           list[float],   # 7*11 = 77, row-major (matches yedi_env)
         "word_hash":       list[float],   # 7*64 = 448, row-major
         "dims_active":     list[float],   # 7, multi-hot over cognitive dimensions
+        "sub_modes_active":list[float],   # 7, multi-hot over operator sub-modes
         "action_mask":     list[int],     # 37
     }
 
@@ -59,6 +60,19 @@ DIMENSIONS: tuple[str, ...] = (
 reorder without bumping the checkpoint version."""
 
 DIMENSIONS_DIM: int = len(DIMENSIONS)
+
+SUB_MODES: tuple[str, ...] = (
+    "add", "subtract", "multiply",   # math / visual (color) operators
+    "triangle", "rectangle",          # spatial shape targets
+    "verbs", "nouns",                 # verbal part-of-speech targets
+)
+"""Known sub-mode tokens across all dimensions. The config_key for a game
+like ``math:add+verbal:verbs`` contains both ``add`` and ``verbs``; this
+multi-hot lets a single policy condition on the operator, not just the
+dimension. Append-only — adding a new sub-mode is a breaking change
+that bumps the checkpoint version."""
+
+SUB_MODES_DIM: int = len(SUB_MODES)
 
 SLOT_FEATURE_DIM: int = 11
 """Per-slot features, must match yedi_env._serialize_slots ordering.
@@ -102,6 +116,25 @@ def parse_active_dimensions(config_key: str | None) -> np.ndarray:
     tokens = set(re.findall(r"[a-z0-9]+", config_key.lower()))
     for i, dim in enumerate(DIMENSIONS):
         if dim in tokens:
+            vec[i] = 1.0
+    return vec
+
+
+def parse_sub_modes(config_key: str | None) -> np.ndarray:
+    """Multi-hot encode the sub-modes (operators) active in ``config_key``.
+
+    Without this, ``math:add`` and ``math:multiply`` produce identical
+    ``dims_active`` vectors — the model only sees "math is on" and can't
+    condition behaviour on the operator. We tokenize the same way
+    ``parse_active_dimensions`` does so both paths handle the various
+    ``:`` / ``+`` / hyphen separators uniformly.
+    """
+    vec = np.zeros(SUB_MODES_DIM, dtype=np.float32)
+    if not config_key:
+        return vec
+    tokens = set(re.findall(r"[a-z0-9]+", config_key.lower()))
+    for i, sub in enumerate(SUB_MODES):
+        if sub in tokens:
             vec[i] = 1.0
     return vec
 
@@ -212,6 +245,7 @@ def featurize_step(
     word_hash_flat = np.concatenate(word_vecs).tolist()
     config_key = str(raw.get("config_key", "") or "")
     dims_active = parse_active_dimensions(config_key).tolist()
+    sub_modes_active = parse_sub_modes(config_key).tolist()
 
     # Prefer the pre-serialized mask the agent actually saw; fall back
     # only when the observation payload isn't in the log.
@@ -238,6 +272,7 @@ def featurize_step(
         "slots":           slots_flat,
         "word_hash":       word_hash_flat,
         "dims_active":     dims_active,
+        "sub_modes_active": sub_modes_active,
         "action_mask":     action_mask,
     }
 

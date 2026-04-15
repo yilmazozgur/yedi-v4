@@ -43,6 +43,11 @@ class BCModelConfig:
     num_actions: int = NUM_ACTIONS
     hidden_sizes: tuple[int, ...] = (256, 256)
     dropout: float = 0.1
+    # 0 disables the config embedding path entirely (single-config runs
+    # or checkpoints predating the embedding). The trainer sets this to
+    # ``len(vocab) + 1`` — the +1 being the reserved UNK slot at id 0.
+    config_vocab_size: int = 0
+    config_emb_dim: int = 8
 
 
 class BCPolicy(nn.Module):
@@ -58,27 +63,44 @@ class BCPolicy(nn.Module):
         # explodes. BatchNorm1d tracks running stats so inference
         # picks up the same mean/var without a separate calibration
         # pass.
-        layers: list[nn.Module] = [nn.BatchNorm1d(cfg.obs_dim)]
-        prev = cfg.obs_dim
+        self.bn = nn.BatchNorm1d(cfg.obs_dim)
+        # The config embedding deliberately bypasses BN: BN would
+        # destandardize each embedding across a batch (different configs
+        # → different running means) and fight the embedding's job of
+        # holding a stable per-config vector. Concat it after BN instead.
+        self.config_embed = (
+            nn.Embedding(cfg.config_vocab_size, cfg.config_emb_dim)
+            if cfg.config_vocab_size > 0 and cfg.config_emb_dim > 0
+            else None
+        )
+        mlp_in = cfg.obs_dim + (cfg.config_emb_dim if self.config_embed is not None else 0)
+
+        layers: list[nn.Module] = []
+        prev = mlp_in
         for h in cfg.hidden_sizes:
             layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(cfg.dropout)]
             prev = h
         layers.append(nn.Linear(prev, cfg.num_actions))
-        self.net = nn.Sequential(*layers)
+        self.mlp = nn.Sequential(*layers)
 
     def forward(
         self,
         features: torch.Tensor,
         mask: torch.Tensor | None = None,
+        config_id: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Return unmasked logits (train) or masked logits (inference).
 
-        Training code passes ``mask=None`` — see the module docstring for
-        why we don't mask at train time. At inference ``BehaviorCloningAgent``
-        supplies the live env mask, which is reliable because it comes
-        from the running game rather than a logged frame.
+        ``config_id`` is required iff the model was built with a non-zero
+        ``config_vocab_size``; otherwise it's silently ignored so legacy
+        checkpoints keep working through the same forward signature.
         """
-        logits = self.net(features)
+        x = self.bn(features)
+        if self.config_embed is not None:
+            if config_id is None:
+                raise ValueError("model built with config_vocab_size>0 requires config_id")
+            x = torch.cat([x, self.config_embed(config_id)], dim=-1)
+        logits = self.mlp(x)
         if mask is not None:
             logits = logits + (1.0 - mask) * LOGIT_MASK_NEG_INF
         return logits

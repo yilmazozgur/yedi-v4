@@ -126,6 +126,14 @@ def test_agent(
             success=True,
             message="Human recorder — play the game in the browser when a run starts.",
         )
+    if agent.provider == "bc":
+        from ..providers.registry import validate_bc_checkpoint
+        ok, msg = validate_bc_checkpoint(agent.model)
+        return AgentTestResult(success=ok, message=msg)
+    if agent.provider == "dt":
+        from ..providers.registry import validate_dt_checkpoint
+        ok, msg = validate_dt_checkpoint(agent.model)
+        return AgentTestResult(success=ok, message=msg)
 
     # Ollama: auto-pull the model before testing connectivity.
     if agent.provider == "ollama" and agent.model:

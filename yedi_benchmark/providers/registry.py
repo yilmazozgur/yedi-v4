@@ -21,7 +21,7 @@ from .litellm_provider import LiteLLMProvider
 # RandomAgent / GreedyAgent directly.
 SUPPORTED_PROVIDERS = [
     "anthropic", "openai", "google", "together", "ollama", "custom",
-    "random", "greedy", "human",
+    "random", "greedy", "human", "bc", "dt",
 ]
 
 
@@ -98,6 +98,11 @@ DEFAULT_MODELS: dict[str, list[str]] = {
     "random": [],
     "greedy": [],
     "human": [],
+    # BC is "provider-less": the `model` field holds a filesystem path to a
+    # trained checkpoint (.pt). No curated menu — paths are user-specific.
+    "bc": [],
+    # DT (Decision Transformer) — same pseudo-provider pattern as BC.
+    "dt": [],
 }
 
 
@@ -111,6 +116,8 @@ DEFAULT_API_KEY_ENVS: dict[str, str] = {
     "custom": "",
     "random": "",
     "greedy": "",
+    "bc": "",
+    "dt": "",
 }
 
 
@@ -127,6 +134,8 @@ DEFAULT_BASE_URLS: dict[str, str] = {
     "custom": "",
     "random": "",
     "greedy": "",
+    "bc": "",
+    "dt": "",
 }
 
 
@@ -149,6 +158,48 @@ _TOGETHER_MODEL_PREFIX = "together_ai/"
 # crashes when a screenshot is also attached. 16384 gives comfortable room
 # for system prompt + screenshot tokens + state dump on modest local models.
 DEFAULT_OLLAMA_NUM_CTX = 16384
+
+
+# ---------------------------------------------------------------------------
+# BC checkpoint validation
+# ---------------------------------------------------------------------------
+#
+# BC agents are wired in as a pseudo-provider so they can sit in the same
+# registry / UI as LLM agents. The `model` field on AgentConfig holds the
+# checkpoint path. This is a hack (the field is semantically an LLM model
+# name) but avoids a schema migration for a field BC is the only consumer
+# of. If BC ever grows a second inference-time knob, promote this to a
+# proper `checkpoint_path` column.
+
+
+def validate_bc_checkpoint(path_str: Optional[str]) -> tuple[bool, str]:
+    """Return (ok, message). Used by create/test endpoints so a typo in the
+    path surfaces at agent-create time, not at the first act() call."""
+    from pathlib import Path as _P
+    if not path_str:
+        return False, "BC agent requires a checkpoint path in the 'model' field"
+    p = _P(path_str).expanduser()
+    if not p.exists():
+        return False, f"BC checkpoint not found: {path_str}"
+    if p.suffix != ".pt":
+        return False, f"BC checkpoint must end in .pt (got {p.suffix!r}): {path_str}"
+    return True, f"BC checkpoint found at {p}"
+
+
+def validate_dt_checkpoint(path_str: Optional[str]) -> tuple[bool, str]:
+    """Same shape as validate_bc_checkpoint but scoped to DT. We keep the two
+    helpers separate (rather than one polymorphic check) because the error
+    message references the model family — clearer for the user when a BC
+    path is pasted into a DT agent slot or vice versa."""
+    from pathlib import Path as _P
+    if not path_str:
+        return False, "DT agent requires a checkpoint path in the 'model' field"
+    p = _P(path_str).expanduser()
+    if not p.exists():
+        return False, f"DT checkpoint not found: {path_str}"
+    if p.suffix != ".pt":
+        return False, f"DT checkpoint must end in .pt (got {p.suffix!r}): {path_str}"
+    return True, f"DT checkpoint found at {p}"
 
 
 def resolve_api_key(api_key_env: Optional[str]) -> Optional[str]:
@@ -243,6 +294,10 @@ def smoke_test_agent(agent_cfg, timeout: float = 30.0) -> tuple[bool, str]:
         return True, f"{provider} baseline (no provider to test)"
     if provider == "human":
         return True, "human recorder (passive, no provider to test)"
+    if provider == "bc":
+        return validate_bc_checkpoint(getattr(agent_cfg, "model", None))
+    if provider == "dt":
+        return validate_dt_checkpoint(getattr(agent_cfg, "model", None))
 
     # Ollama: auto-pull the model if it isn't available locally yet.
     if provider == "ollama":
@@ -297,6 +352,14 @@ def create_provider(
         raise ProviderError("greedy is not an LLM provider — use GreedyAgent directly")
     if provider == "human":
         raise ProviderError("human is not an LLM provider — use HumanAgent directly")
+    if provider == "bc":
+        raise ProviderError(
+            "bc is not an LLM provider — use BehaviorCloningAgent directly"
+        )
+    if provider == "dt":
+        raise ProviderError(
+            "dt is not an LLM provider — use DecisionTransformerAgent directly"
+        )
     if provider not in SUPPORTED_PROVIDERS:
         raise ProviderError(f"Unknown provider: {provider}")
 

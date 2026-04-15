@@ -186,6 +186,7 @@ class TestTrainLoop:
             dropout=0.0,
             seed=0,
             device="cpu",
+            k_folds=1,  # single split keeps the convergence target tight
             log_fn=lambda *a, **k: None,
         )
         assert summary["best_eval_acc"] > 0.9
@@ -194,12 +195,41 @@ class TestTrainLoop:
         assert summary["obs_dim"] == OBS_DIM
         assert summary["num_actions"] == NUM_ACTIONS
 
+    def test_kfold_produces_mean_and_std_over_folds(self, tmp_path):
+        """Default path: k-fold CV reports mean/std/per-fold accs and ships
+        a checkpoint retrained on the full dataset (eval_rows=0)."""
+        data = _write_dataset(tmp_path, num_eps=6, steps_per_ep=4)
+        ds = load_parquet(data)
+        summary = train(
+            ds, out_path=tmp_path / "ckpt.pt",
+            epochs=5, batch_size=8, lr=3e-3, dropout=0.0, seed=0,
+            device="cpu", k_folds=3, log_fn=lambda *a, **k: None,
+        )
+        assert summary["k_folds"] == 3
+        assert len(summary["fold_eval_accs"]) == 3
+        assert summary["std_eval_acc"] >= 0.0
+        # Shipped checkpoint was retrained on all rows — no held-out eval.
+        assert summary["eval_rows"] == 0
+        assert summary["train_rows"] == len(ds)
+
+    def test_kfold_clamps_to_leave_one_out_for_tiny_data(self, tmp_path):
+        """k_folds larger than num_episodes should clamp, not crash."""
+        data = _write_dataset(tmp_path, num_eps=3, steps_per_ep=3)
+        ds = load_parquet(data)
+        summary = train(
+            ds, out_path=tmp_path / "ckpt.pt",
+            epochs=2, batch_size=8, device="cpu",
+            k_folds=10, log_fn=lambda *a, **k: None,
+        )
+        # 3 episodes → 3 folds (leave-one-out)
+        assert len(summary["fold_eval_accs"]) == 3
+
     def test_raises_when_split_is_empty(self, tmp_path):
         data = _write_dataset(tmp_path, num_eps=1, steps_per_ep=3)
         ds = load_parquet(data)
         with pytest.raises(ValueError):
             train(ds, out_path=tmp_path / "ckpt.pt", epochs=1,
-                  eval_fraction=0.5, device="cpu",
+                  eval_fraction=0.5, device="cpu", k_folds=1,
                   log_fn=lambda *a, **k: None)
 
 
@@ -228,6 +258,7 @@ class TestLiveInferenceParity:
             np.array(offline["slots"], dtype=np.float32),
             np.array(offline["word_hash"], dtype=np.float32),
             np.array(offline["dims_active"], dtype=np.float32),
+            np.array(offline["sub_modes_active"], dtype=np.float32),
         ])
         live_vec = _featurize_live(raw)
         np.testing.assert_array_equal(offline_vec, live_vec)
@@ -239,7 +270,7 @@ class TestBCAgent:
         ds = load_parquet(data)
         train(ds, out_path=tmp_path / "ckpt.pt", eval_fraction=0.25,
               epochs=3, batch_size=8, lr=1e-3, dropout=0.0, seed=0,
-              device="cpu", log_fn=lambda *a, **k: None)
+              device="cpu", k_folds=1, log_fn=lambda *a, **k: None)
 
         agent = BehaviorCloningAgent(tmp_path / "ckpt.pt", device="cpu")
         raw = _state(123.0)
@@ -250,11 +281,44 @@ class TestBCAgent:
         action = agent.act(obs, info)
         assert action in (0, 2)
 
+    def test_runner_factory_routes_bc_provider(self, tmp_path):
+        """create_agent_from_registry("bc") returns a live BC agent loaded from
+        the checkpoint in AgentConfig.model. This is the end-to-end check that
+        the "bc" pseudo-provider is reachable from the benchmark runner."""
+        from yedi_benchmark.benchmark_runner import create_agent_from_registry
+        from yedi_benchmark.registries.models import AgentConfig, AgentMode
+
+        data = _write_dataset(tmp_path, num_eps=4, steps_per_ep=3)
+        ds = load_parquet(data)
+        ckpt = tmp_path / "ckpt.pt"
+        train(ds, out_path=ckpt, eval_fraction=0.25, epochs=1,
+              batch_size=8, device="cpu", k_folds=1,
+              log_fn=lambda *a, **k: None)
+
+        cfg = AgentConfig(name="bc-test", provider="bc", model=str(ckpt))
+        agent = create_agent_from_registry(
+            cfg, prompt=None, mode_enum=AgentMode.METADATA_STATELESS,
+        )
+        assert isinstance(agent, BehaviorCloningAgent)
+
+    def test_runner_factory_rejects_bad_bc_checkpoint(self, tmp_path):
+        """A missing or wrong-extension checkpoint must raise at factory time,
+        not at the first act() call mid-run."""
+        from yedi_benchmark.benchmark_runner import create_agent_from_registry
+        from yedi_benchmark.registries.models import AgentConfig, AgentMode
+
+        cfg = AgentConfig(name="bc-bad", provider="bc",
+                          model=str(tmp_path / "does_not_exist.pt"))
+        with pytest.raises(ValueError, match="not found"):
+            create_agent_from_registry(
+                cfg, prompt=None, mode_enum=AgentMode.METADATA_STATELESS,
+            )
+
     def test_load_rejects_dim_drift(self, tmp_path):
         data = _write_dataset(tmp_path, num_eps=4, steps_per_ep=3)
         ds = load_parquet(data)
         train(ds, out_path=tmp_path / "ckpt.pt", eval_fraction=0.25,
-              epochs=1, batch_size=8, device="cpu",
+              epochs=1, batch_size=8, device="cpu", k_folds=1,
               log_fn=lambda *a, **k: None)
 
         # Tamper with the saved summary to simulate a future featurizer change.

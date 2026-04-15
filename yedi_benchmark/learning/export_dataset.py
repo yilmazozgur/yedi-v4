@@ -29,6 +29,7 @@ from .featurizer import (
     NUM_ACTIONS,
     NUM_SLOTS,
     SLOT_FEATURE_DIM,
+    SUB_MODES_DIM,
     WORD_HASH_DIM,
     featurize_episode,
 )
@@ -54,6 +55,7 @@ SCHEMA = pa.schema([
     ("slots",           pa.list_(pa.float32(), NUM_SLOTS * SLOT_FEATURE_DIM)),
     ("word_hash",       pa.list_(pa.float32(), NUM_SLOTS * WORD_HASH_DIM)),
     ("dims_active",     pa.list_(pa.float32(), DIMENSIONS_DIM)),
+    ("sub_modes_active", pa.list_(pa.float32(), SUB_MODES_DIM)),
     ("action_mask",     pa.list_(pa.int8(), NUM_ACTIONS)),
 ])
 

@@ -129,6 +129,28 @@ def create_agent_from_registry(
         from .agents.human_agent import HumanAgent
         return HumanAgent(name=agent_cfg.name)
 
+    if agent_cfg.provider == "bc":
+        # Hack: the `model` field carries the checkpoint path for BC agents.
+        # See providers.registry.validate_bc_checkpoint for the rationale.
+        from .agents.bc_agent import BehaviorCloningAgent
+        from .providers.registry import validate_bc_checkpoint
+
+        ok, msg = validate_bc_checkpoint(agent_cfg.model)
+        if not ok:
+            raise ValueError(f"BC agent {agent_cfg.name!r}: {msg}")
+        return BehaviorCloningAgent(agent_cfg.model, name=agent_cfg.name)
+
+    if agent_cfg.provider == "dt":
+        # Same pseudo-provider pattern as BC — the `model` field holds a
+        # path to a Decision Transformer checkpoint (.pt).
+        from .agents.dt_agent import DecisionTransformerAgent
+        from .providers.registry import validate_dt_checkpoint
+
+        ok, msg = validate_dt_checkpoint(agent_cfg.model)
+        if not ok:
+            raise ValueError(f"DT agent {agent_cfg.name!r}: {msg}")
+        return DecisionTransformerAgent(agent_cfg.model, name=agent_cfg.name)
+
     from .providers.registry import create_provider
     from .agents.llm_agent import LLMAgent
 
