@@ -58,6 +58,7 @@ class RunExecutor:
         log_dir: str,
         show_merge_previews: bool = False,
         perfect_memory: bool = False,
+        workers: int = 1,
     ) -> RunRecord:
         """Start a benchmark run in a background thread.
 
@@ -86,6 +87,7 @@ class RunExecutor:
                         cancel_event=cancel_event,
                         show_merge_previews=show_merge_previews,
                         perfect_memory=perfect_memory,
+                        workers=workers,
                     )
                 except Exception:
                     # Errors are already logged + persisted to the run record

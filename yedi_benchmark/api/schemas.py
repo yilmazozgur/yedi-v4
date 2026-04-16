@@ -101,6 +101,9 @@ class RunCreate(BaseModel):
     # against the baseline.
     show_merge_previews: bool = False  # render bridge merge_previews to LLMs
     perfect_memory: bool = False        # disable Memory dimension masking
+    workers: int = Field(default=1, ge=1, le=8,
+                         description="Parallel worker servers. Each spawns "
+                                     "its own server + browser tab.")
 
 
 class RunActiveStatus(BaseModel):

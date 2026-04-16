@@ -112,6 +112,7 @@ class YediEnv(gym.Env):
         render_mode: Optional[str] = None,
         seed: Optional[int] = None,
         max_steps: int = 100,
+        command_timeout: float = 30.0,
     ):
         super().__init__()
 
@@ -123,6 +124,7 @@ class YediEnv(gym.Env):
         self.render_mode = render_mode
         self._seed = seed
         self.max_steps = max_steps
+        self.command_timeout = command_timeout
 
         # Action space
         self.action_space = gym.spaces.Discrete(NUM_ACTIONS)
@@ -166,14 +168,21 @@ class YediEnv(gym.Env):
         )
         logger.info(f"Connected to {self.server_url}")
 
-    def _send_command(self, command: dict, timeout: float = 30.0) -> dict:
+    def _send_command(self, command: dict, timeout: float = None) -> dict:
         """Send a command and wait for the response.
+
+        Args:
+            timeout: seconds to wait. Defaults to ``self.command_timeout``
+                (30s by default, but parallel workers pass a higher value to
+                tolerate background-tab throttling).
 
         Raises:
             BridgeDisconnectedError: when the WebSocket bridge dies (browser
                 tab closed, ASGI socket already shut down, etc.) or when the
                 server forwards a bridge-level error response.
         """
+        if timeout is None:
+            timeout = getattr(self, "command_timeout", 30.0)
         self._ensure_connected()
 
         async def _do():
@@ -428,7 +437,11 @@ class YediEnv(gym.Env):
         #     least DRAW available)
         #   - action_count == 0 (we're at step 0, not still seeing the
         #     final-step state of the previous episode)
-        response = self._wait_for_fresh_state(timeout=15.0)
+        # Scale the fresh-state timeout with the command timeout so
+        # parallel workers (command_timeout=120) get enough polling
+        # headroom even when the browser tab is slightly throttled.
+        fresh_timeout = max(15.0, getattr(self, "command_timeout", 30.0))
+        response = self._wait_for_fresh_state(timeout=fresh_timeout)
         self._state = response
         self._prev_mana = self._state.get("mana", 200)
         self._prev_mana_max = self._state.get("mana_max", self._prev_mana)

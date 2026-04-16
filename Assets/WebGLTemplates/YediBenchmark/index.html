@@ -100,6 +100,41 @@
                     // Also report on initial load so the dashboard reflects
                     // the current state without waiting for a transition.
                     setTimeout(sendVisibility, 2500);
+
+                    // Anti-throttle keepalive: Chrome aggressively throttles
+                    // requestAnimationFrame in hidden/background tabs (down
+                    // to 1Hz or slower), which stalls Unity's main loop and
+                    // causes command timeouts. A silent AudioContext with a
+                    // running oscillator tricks Chrome into treating the tab
+                    // as "actively producing audio", which exempts it from
+                    // the aggressive rAF throttling. The oscillator runs at
+                    // 0 gain so the user hears nothing.
+                    try {
+                        var AudioCtx = window.AudioContext || window.webkitAudioContext;
+                        if (AudioCtx) {
+                            var actx = new AudioCtx();
+                            var osc = actx.createOscillator();
+                            var gain = actx.createGain();
+                            gain.gain.value = 0;         // silent
+                            osc.connect(gain);
+                            gain.connect(actx.destination);
+                            osc.start();
+                            // Chrome suspends AudioContext until a user
+                            // gesture, but in agent/worker mode the page is
+                            // opened programmatically with
+                            // --autoplay-policy=no-user-gesture-required so
+                            // it starts immediately. If not, resume on first
+                            // visibility change as a fallback.
+                            if (actx.state === 'suspended') {
+                                document.addEventListener('visibilitychange', function() {
+                                    actx.resume();
+                                }, { once: true });
+                            }
+                            console.log('[Yedi] Anti-throttle AudioContext started');
+                        }
+                    } catch (e) {
+                        console.warn('[Yedi] Anti-throttle AudioContext failed:', e);
+                    }
                 }
             }).catch(function(message) {
                 statusDiv.textContent = "Error: " + message;

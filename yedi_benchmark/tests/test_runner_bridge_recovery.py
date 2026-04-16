@@ -60,7 +60,7 @@ class _ScriptedEnv:
     plan: list[str] = []
     _plan_idx = 0
 
-    def __init__(self, server_url=None, game_config=None, max_steps=None):
+    def __init__(self, server_url=None, game_config=None, max_steps=None, command_timeout=30.0):
         self.server_url = server_url
         self.game_config = game_config or {}
         self.max_steps = max_steps

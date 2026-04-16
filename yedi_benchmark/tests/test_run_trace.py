@@ -256,7 +256,7 @@ from yedi_benchmark.registries import AgentRegistry
 class _StubEnv:
     """Minimal Gymnasium-compatible env stub: one step, then terminate."""
 
-    def __init__(self, server_url=None, game_config=None, max_steps=None):
+    def __init__(self, server_url=None, game_config=None, max_steps=None, command_timeout=30.0):
         self.game_config = game_config or {}
 
     def reset(self, seed=None, options=None):

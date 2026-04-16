@@ -263,6 +263,7 @@ def _stub_runner(stop_event=None, episodes=1, max_steps=10):
         agent_id, prompt_id=None, mode="metadata-b", config_names=None,
         episodes_per_config=1, max_steps=10, server_url="x", log_dir="x",
         cancel_event=None, show_merge_previews=False, perfect_memory=False,
+        workers=1,
     ):
         from yedi_benchmark.registries import (
             AgentRegistry, PromptRegistry, RunRegistry, AgentMode, RunStatus,

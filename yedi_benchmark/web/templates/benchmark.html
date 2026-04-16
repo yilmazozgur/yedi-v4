@@ -29,6 +29,11 @@
                 <label for="b-max-steps">Max steps per episode</label>
                 <input id="b-max-steps" type="number" value="100" min="1">
             </div>
+            <div class="form-row">
+                <label for="b-workers">Workers <span class="dim">(parallel servers)</span></label>
+                <input id="b-workers" type="number" value="1" min="1" max="8"
+                       title="Each worker spawns its own server + browser tab. More workers = faster benchmark but more RAM (~300MB per tab).">
+            </div>
         </div>
 
         <div class="form-row" style="margin-top: 16px;">
@@ -185,15 +190,23 @@
         const cb = document.getElementById("b-show-previews");
         const hint = document.getElementById("b-show-previews-hint");
         const label = document.getElementById("b-show-previews-label");
+        const workersInput = document.getElementById("b-workers");
         if (isVision) {
             cb.checked = false;
             cb.disabled = true;
             label.classList.add("dim");
             hint.style.display = "block";
+            // Vision modes need GPU-rendered screenshots — parallel workers
+            // use software rendering (SwiftShader) which looks different.
+            workersInput.value = "1";
+            workersInput.disabled = true;
+            workersInput.title = "Vision modes require a single worker (GPU rendering needed for accurate screenshots).";
         } else {
             cb.disabled = false;
             label.classList.remove("dim");
             hint.style.display = "none";
+            workersInput.disabled = false;
+            workersInput.title = "Each worker spawns its own server + browser tab. More workers = faster benchmark but more RAM (~300MB per tab).";
         }
     }
     document.getElementById("b-mode").addEventListener("change", applyVisionLock);
@@ -207,6 +220,7 @@
         const maxSteps = parseInt(document.getElementById("b-max-steps").value, 10) || 100;
         const showPreviews = document.getElementById("b-show-previews").checked;
         const perfectMemory = document.getElementById("b-perfect-memory").checked;
+        const workers = parseInt(document.getElementById("b-workers").value, 10) || 1;
         const configs = Array.from(document.querySelectorAll("#config-picker input[type=checkbox]:checked")).map((cb) => cb.value);
         if (!agentId) { toast("Pick an agent", "error"); return; }
         if (configs.length === 0) { toast("Pick at least one config", "error"); return; }
@@ -222,6 +236,7 @@
                 max_steps: maxSteps,
                 show_merge_previews: showPreviews,
                 perfect_memory: perfectMemory,
+                workers: workers,
             });
             toast(`Run started: ${run.id}`, "ok");
             setTimeout(() => { window.location.href = "/runs"; }, 600);
@@ -235,9 +250,10 @@
         const launch = document.getElementById("b-launch");
         const hint = document.getElementById("b-launch-hint");
         const noGameCard = document.getElementById("b-no-game-card");
-        if (s && s.game_connected) {
+        const workers = parseInt(document.getElementById("b-workers").value, 10) || 1;
+        if ((s && s.game_connected) || workers > 1) {
             launch.disabled = false;
-            hint.textContent = "";
+            hint.textContent = workers > 1 ? `${workers} workers will launch their own browsers` : "";
             noGameCard.style.display = "none";
         } else {
             launch.disabled = true;
@@ -245,6 +261,10 @@
             noGameCard.style.display = "block";
         }
     }
+    // Re-evaluate bridge state when workers count changes.
+    document.getElementById("b-workers").addEventListener("change", () => {
+        window.YediApp.onBridgeStatusChange(applyBridgeState);
+    });
 
     loadAgents();
     loadConfigs();

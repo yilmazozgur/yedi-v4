@@ -97,6 +97,13 @@ HEARTBEAT_DEAD_AFTER_S = 12.0
 # carrying this seq so they don't show up as "unrouted" warnings.
 HEARTBEAT_SEQ = -1
 
+# Per-command timeout for the agent WebSocket route. The env-side timeout
+# should be at least this long; shorter means the env times out first and
+# the server-side future leaks until it expires. Worker mode (parallel
+# benchmark) sets this higher because hidden browser tabs can be throttled
+# by Chrome despite anti-throttle flags.
+AGENT_COMMAND_TIMEOUT_S = 30.0
+
 
 class GameConnection:
     """Represents the browser/Unity WebSocket connection."""
@@ -467,7 +474,9 @@ async def agent_websocket(ws: WebSocket):
                     continue
 
                 try:
-                    response = await asyncio.wait_for(future, 30.0)
+                    response = await asyncio.wait_for(
+                        future, AGENT_COMMAND_TIMEOUT_S,
+                    )
                     await ws.send_json(response)
                 except asyncio.TimeoutError:
                     conn.pending_responses.pop(seq, None)
@@ -646,6 +655,57 @@ async def serve_template_data(filepath: str):
 # Entry point
 # ------------------------------------------------------------------
 
+def _create_worker_app(build_dir: str) -> FastAPI:
+    """Create a lightweight FastAPI app for parallel worker servers.
+
+    Worker servers only need the WebSocket bridge + static file serving.
+    They skip the dashboard UI, API routers, and run reconciliation to
+    reduce surface area and startup time.
+    """
+    worker_app = FastAPI(title="Yedi Worker")
+
+    # Bridge status endpoint so WorkerServer.wait_game_connected() can poll.
+    from .api.routes_bridge import router as bridge_router
+    worker_app.include_router(bridge_router)
+
+    # WS endpoints — reuse the module-level handlers (they use globals
+    # game_connection / agent_connection which are per-process).
+    @worker_app.websocket("/ws/game")
+    async def _game_ws(ws: WebSocket):
+        await game_websocket(ws)
+
+    @worker_app.websocket("/ws/agent")
+    async def _agent_ws(ws: WebSocket):
+        await agent_websocket(ws)
+
+    # Static file serving for the Unity WebGL build.
+    setup_static_files(build_dir)
+
+    @worker_app.get("/game/embed", include_in_schema=False)
+    async def _embed():
+        return await serve_game_embed()
+
+    @worker_app.get("/Build/{filepath:path}")
+    async def _build(filepath: str):
+        return await serve_build_files(filepath)
+
+    @worker_app.get("/StreamingAssets/{filepath:path}")
+    async def _streaming(filepath: str):
+        return await serve_streaming_assets(filepath)
+
+    @worker_app.get("/TemplateData/{filepath:path}")
+    async def _template(filepath: str):
+        return await serve_template_data(filepath)
+
+    # Root redirect so the browser tab opened by WorkerServer gets the game.
+    @worker_app.get("/", include_in_schema=False)
+    async def _root():
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/game/embed?agent=true")
+
+    return worker_app
+
+
 def main():
     parser = argparse.ArgumentParser(description="Yedi AI Benchmark Server")
     # The default is computed relative to THIS file rather than the cwd —
@@ -658,9 +718,34 @@ def main():
                         help="Path to WebGL build directory")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--worker-mode", action="store_true",
+                        help="Run as a lightweight parallel-benchmark worker "
+                             "(WS bridge + static files only, no dashboard)")
     args = parser.parse_args()
 
-    setup_static_files(os.path.abspath(args.build_dir))
+    build_dir = os.path.abspath(args.build_dir)
+
+    if args.worker_mode:
+        # Worker tabs can be hidden/occluded while the user watches a
+        # different tab. Despite anti-throttle Chrome flags, Chrome may
+        # still slow rAF to ~1 Hz in hidden tabs. Increase the server-
+        # side command timeout so those slower responses don't trip the
+        # timeout and cascade into BridgeDisconnectedError → scene reload.
+        global AGENT_COMMAND_TIMEOUT_S
+        AGENT_COMMAND_TIMEOUT_S = 120.0
+        worker_app = _create_worker_app(build_dir)
+        logger.info(f"Starting WORKER server on {args.host}:{args.port}")
+        uvicorn.run(
+            worker_app,
+            host=args.host,
+            port=args.port,
+            ws_ping_interval=30,
+            ws_ping_timeout=120,
+            log_level="warning",
+        )
+        return
+
+    setup_static_files(build_dir)
     _reconcile_orphan_runs()
 
     logger.info(f"Starting server on {args.host}:{args.port}")

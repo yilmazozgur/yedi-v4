@@ -230,6 +230,7 @@ class RunRecord(BaseModel):
     # flags existed.
     show_merge_previews: bool = False
     perfect_memory: bool = False
+    workers: int = 1  # parallel worker servers used for this run
 
     # Per-config results
     results: dict[str, ConfigResult] = Field(default_factory=dict)

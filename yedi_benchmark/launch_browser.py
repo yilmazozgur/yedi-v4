@@ -64,6 +64,13 @@ THROTTLING_DISABLE_FLAGS = [
     "--disable-background-timer-throttling",
     "--disable-renderer-backgrounding",
     "--disable-backgrounding-occluded-windows",
+    # Allow the AudioContext anti-throttle keepalive to start without a
+    # user gesture. Without this, Chrome suspends the AudioContext until
+    # the user clicks — which never happens in headless worker tabs.
+    "--autoplay-policy=no-user-gesture-required",
+    # Skip Chrome's first-run welcome page. Without this, a fresh
+    # user-data-dir shows the setup flow instead of navigating to the URL.
+    "--no-first-run",
     "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
 ]
 

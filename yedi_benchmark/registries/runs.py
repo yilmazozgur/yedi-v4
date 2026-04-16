@@ -87,6 +87,7 @@ class RunRegistry:
         config_modes: Optional[dict[str, dict[str, str]]] = None,
         show_merge_previews: bool = False,
         perfect_memory: bool = False,
+        workers: int = 1,
     ) -> RunRecord:
         """Create a new RunRecord with frozen agent + prompt snapshots.
 
@@ -123,6 +124,7 @@ class RunRegistry:
                 mode=mode,
                 show_merge_previews=show_merge_previews,
                 perfect_memory=perfect_memory,
+                workers=workers,
                 results={
                     name: ConfigResult(
                         config_name=name,

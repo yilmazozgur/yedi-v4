@@ -25,6 +25,12 @@ public class LevelLoader : MonoBehaviour {
 
     private void OnApplicationPause(bool pause)
     {
+        // In agent mode the Python env controls the game lifecycle via
+        // start_game commands. The unpause branch below reloads the scene,
+        // which would interrupt a running episode every time a browser tab
+        // gains focus — fatal when multiple worker tabs are open in parallel.
+        if (AgentBridge.agentMode) return;
+
         //Save scene Name if paused, otherwise load last scene
         if (pause)
         {

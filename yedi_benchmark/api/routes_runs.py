@@ -89,7 +89,9 @@ def create_run(
     instead of letting the worker thread spawn and crash on the first LLM
     call.
     """
-    if not bridge.is_game_connected():
+    # When workers > 1, the parallel runner spawns its own server+browser
+    # pairs, so the main server's bridge state is irrelevant.
+    if body.workers <= 1 and not bridge.is_game_connected():
         raise HTTPException(
             400,
             "No browser game is connected to /ws/game. Open the Game tab "
@@ -108,6 +110,18 @@ def create_run(
             "The merge_previews block contains pre-computed per-dimension "
             "gains that bypass visual perception and leak memory-hidden "
             "card values. Disable it to run a vision benchmark.",
+        )
+
+    # Vision modes require GPU-rendered screenshots. Parallel workers use
+    # Xvfb + SwiftShader (software rendering) which produces visually
+    # different output that would compromise VLM evaluation. Force single
+    # worker for vision benchmarks.
+    if body.mode.value.startswith("vision") and body.workers > 1:
+        raise HTTPException(
+            400,
+            "Vision modes require a single worker. Parallel workers use "
+            "software rendering (SwiftShader) which produces different "
+            "visuals than GPU rendering, compromising VLM evaluation.",
         )
 
     # Pre-run smoke test: look up the agent here (rather than letting the
@@ -140,6 +154,7 @@ def create_run(
             log_dir=body.log_dir,
             show_merge_previews=body.show_merge_previews,
             perfect_memory=body.perfect_memory,
+            workers=body.workers,
         )
         return record
     except ExecutorBusyError as e:
