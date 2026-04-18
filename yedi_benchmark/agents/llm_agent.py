@@ -1085,6 +1085,16 @@ def describe_state(
                 for dim in active_dims:
                     g = int(p.get(f"{dim}_gain", 0))
                     label, mult = _MERGE_TIER.get(g, (f"tier{g:+d}", "?"))
+                    # For the word dimension, use the bridge-reported actual
+                    # multiplier when available. Compound pair matches push
+                    # the true multiplier above the tier-3 canonical 2.5
+                    # (e.g. two pairs → 4.0). Falling back to the tier's
+                    # canonical value when the field is missing keeps the
+                    # renderer compatible with older bridge builds.
+                    if dim == "word":
+                        wm = p.get("word_multiplier")
+                        if isinstance(wm, (int, float)) and wm > 0:
+                            mult = f"{wm:g}"
                     parts.append(f"{_DIM_NAME[dim]} {label} ×{mult}")
                 action_str = f"a{action:<3}" if action is not None else "?   "
                 lines.append(f"  {action_str} {src}→{tgt}: {', '.join(parts)}")

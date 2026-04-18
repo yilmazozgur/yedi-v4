@@ -832,7 +832,8 @@ public class AgentBridge : MonoBehaviour
         msg.target = cmd.target;
 
         ComputeMergeGains(sourceFrame, targetFrame,
-            out msg.number_gain, out msg.color_gain, out msg.shape_gain, out msg.word_gain);
+            out msg.number_gain, out msg.color_gain, out msg.shape_gain, out msg.word_gain,
+            out msg.word_multiplier);
 
         // Whether the target card has any merges left. The greedy agent uses
         // this to skip merges that would be rejected by the game.
@@ -872,15 +873,24 @@ public class AgentBridge : MonoBehaviour
     // Compute the per-dimension gain tier for a hypothetical merge, using the
     // SAME ComputeMerge*Gain functions the real merge code calls. Inactive
     // dimensions get 0 (the gain functions are no-ops in that case).
+    //
+    // wordMultiplier is the actual multiplier the word merge would apply
+    // (product of 0.9 / 2.0 / 2.5 ops), independent of the tier bucket.
+    // Needed because compound pair matches push the real multiplier above
+    // the tier-3 canonical 2.5 (e.g. two pairs → 4.0), and the preview
+    // rendered to the LLM should reflect that. 1f means "no word effect
+    // computed" (inactive or missing).
     void ComputeMergeGains(
         CardFrame sourceFrame, CardFrame targetFrame,
         out float numberGain, out float colorGain,
-        out float shapeGain, out float wordGain)
+        out float shapeGain, out float wordGain,
+        out float wordMultiplier)
     {
         numberGain = 0f;
         colorGain = 0f;
         shapeGain = 0f;
         wordGain = 0f;
+        wordMultiplier = 1f;
 
         if (sourceFrame == null || targetFrame == null) return;
 
@@ -899,7 +909,7 @@ public class AgentBridge : MonoBehaviour
         if (sourceFrame.wordCard != null && targetFrame.wordCard != null
             && targetFrame.wordCard.wordSelectedList != null)
             wordGain = sourceFrame.wordCard.ComputeMergeWordGain(
-                targetFrame.wordCard.wordSelectedList);
+                targetFrame.wordCard.wordSelectedList, out wordMultiplier);
     }
 
     void ExecuteConfigure(AgentCommand cmd)
@@ -1152,7 +1162,8 @@ public class AgentBridge : MonoBehaviour
                 entry.action = 1 + srcIdx * 5 + (dstNum - 1);
                 ComputeMergeGains(srcFrame, dstFrame,
                     out entry.number_gain, out entry.color_gain,
-                    out entry.shape_gain, out entry.word_gain);
+                    out entry.shape_gain, out entry.word_gain,
+                    out entry.word_multiplier);
                 entries.Add(entry);
             }
         }
@@ -1696,6 +1707,10 @@ public class AgentBridge : MonoBehaviour
         public float color_gain;
         public float shape_gain;
         public float word_gain;
+        // Actual word-merge multiplier (can exceed the tier-3 canonical 2.5
+        // when multiple pair matches compound). 1f when word is inactive or
+        // the preview is neutral — see ComputeMergeGains for details.
+        public float word_multiplier;
     }
 
     [System.Serializable]
@@ -1762,6 +1777,8 @@ public class AgentBridge : MonoBehaviour
         public float color_gain;
         public float shape_gain;
         public float word_gain;
+        // Actual word-merge multiplier (see MergePreviewEntry.word_multiplier).
+        public float word_multiplier;
         // Merge-budget info on the target so the agent can avoid invalid merges
         public int target_merges_done;
         public int target_merges_max;

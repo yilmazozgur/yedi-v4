@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -192,6 +193,33 @@ class TestAgentConnectionSendCommand:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+def _start_loop_thread(env: YediEnv) -> None:
+    """Run env._loop on a daemon thread.
+
+    _send_command dispatches via run_coroutine_threadsafe, so the loop
+    must actually be running somewhere other than the test thread.
+    """
+    ready = threading.Event()
+
+    def _runner():
+        asyncio.set_event_loop(env._loop)
+        ready.set()
+        env._loop.run_forever()
+
+    env._loop_thread = threading.Thread(target=_runner, daemon=True)
+    env._loop_thread.start()
+    ready.wait()
+
+
+def _close_env(env: YediEnv) -> None:
+    loop = env._loop
+    loop.call_soon_threadsafe(loop.stop)
+    thread = getattr(env, "_loop_thread", None)
+    if thread is not None:
+        thread.join(timeout=2)
+    loop.close()
+
+
 def _make_env(send_response):
     """Build a YediEnv instance with a fake ws/loop wired in.
 
@@ -200,6 +228,7 @@ def _make_env(send_response):
     """
     env = YediEnv.__new__(YediEnv)  # bypass __init__ — no real ws needed
     env._loop = asyncio.new_event_loop()
+    _start_loop_thread(env)
 
     fake_ws = MagicMock()
     fake_ws.send = AsyncMock()
@@ -222,7 +251,7 @@ class TestYediEnvSendCommand:
             result = env._send_command({"type": "get_state"})
             assert result["mana"] == 250
         finally:
-            env._loop.close()
+            _close_env(env)
 
     def test_raises_on_error_payload(self):
         env = _make_env(json.dumps({"error": "no game connected", "seq": 1}))
@@ -230,7 +259,7 @@ class TestYediEnvSendCommand:
             with pytest.raises(BridgeDisconnectedError, match="no game connected"):
                 env._send_command({"type": "draw_card"})
         finally:
-            env._loop.close()
+            _close_env(env)
 
     def test_raises_on_connection_closed(self):
         from websockets.exceptions import ConnectionClosedError
@@ -248,7 +277,7 @@ class TestYediEnvSendCommand:
             # Dead socket should have been dropped
             assert env._ws is None
         finally:
-            env._loop.close()
+            _close_env(env)
 
     def test_raises_on_recv_timeout(self):
         # Wait_for raises TimeoutError when the inner future never completes;
@@ -258,6 +287,7 @@ class TestYediEnvSendCommand:
 
         env = YediEnv.__new__(YediEnv)
         env._loop = asyncio.new_event_loop()
+        _start_loop_thread(env)
         fake_ws = MagicMock()
         fake_ws.send = AsyncMock()
         fake_ws.recv = never
@@ -267,7 +297,7 @@ class TestYediEnvSendCommand:
             with pytest.raises(BridgeDisconnectedError, match="timed out"):
                 env._send_command({"type": "draw_card"}, timeout=0.05)
         finally:
-            env._loop.close()
+            _close_env(env)
 
     def test_error_response_with_state_passthrough(self):
         """An ``{"error": ...}`` payload that ALSO carries state (e.g. recoverable
@@ -280,7 +310,7 @@ class TestYediEnvSendCommand:
             assert result["error"] == "invalid move"
             assert result["mana"] == 200
         finally:
-            env._loop.close()
+            _close_env(env)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

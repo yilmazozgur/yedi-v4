@@ -17,10 +17,10 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/Level 1 Space for Unity.unity
     guid: 83ba2c59354f746d6ba847d3d46a415b
-  - enabled: 1
+  - enabled: 0
     path: Assets/Scenes/Options Screen.unity
     guid: 437275e0ede2e534e99ce9b02b217d2a
-  - enabled: 1
+  - enabled: 0
     path: Assets/Scenes/Stats Screen Expanded.unity
     guid: 8c8c2ab5ea3d146b394bb1c09f83d2bc
   m_configObjects: {}

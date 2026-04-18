@@ -20,6 +20,7 @@ Observation Space (Dict):
 import asyncio
 import json
 import logging
+import threading
 import time
 from typing import Optional
 
@@ -141,6 +142,7 @@ class YediEnv(gym.Env):
 
         self._ws = None
         self._loop = None
+        self._loop_thread: Optional[threading.Thread] = None
         self._state = None
         self._prev_mana = 0
         self._prev_mana_max = 0
@@ -153,19 +155,44 @@ class YediEnv(gym.Env):
     def _ensure_connected(self):
         if self._ws is not None:
             return
+        # Run the asyncio loop in a dedicated daemon thread. Without this,
+        # the loop would only spin during run_until_complete() and the
+        # websockets library could not respond to server keepalive pings
+        # during the long waits between commands (LLM inference can easily
+        # take 200-330s for slow models like Kimi-K2.5). Missed pongs trip
+        # ws_ping_timeout on the server and the connection dies with 1011.
         self._loop = asyncio.new_event_loop()
-        self._ws = self._loop.run_until_complete(
-            websockets.connect(
+        ready = threading.Event()
+
+        def _loop_runner():
+            asyncio.set_event_loop(self._loop)
+            ready.set()
+            self._loop.run_forever()
+
+        self._loop_thread = threading.Thread(
+            target=_loop_runner,
+            name="yedi-env-loop",
+            daemon=True,
+        )
+        self._loop_thread.start()
+        ready.wait()
+
+        # websockets.connect(...) returns a Connect awaitable (context
+        # manager), not a plain coroutine, and run_coroutine_threadsafe
+        # insists on an actual coroutine. Wrap it.
+        async def _do_connect():
+            return await websockets.connect(
                 self.server_url,
                 max_size=10 * 1024 * 1024,
-                # Disable client-side keepalive pings. The LLM agent blocks
-                # the event loop for 10-60s during API calls; the default 20s
-                # ping_timeout kills the connection while the agent is thinking.
-                # The server-side heartbeat (gym_server.py) already handles
-                # liveness detection for the game bridge.
+                # Disable client-side pings. The server side still pings us
+                # and our background loop keeps responding even while the
+                # main thread is blocked in an LLM call.
                 ping_interval=None,
             )
-        )
+
+        self._ws = asyncio.run_coroutine_threadsafe(
+            _do_connect(), self._loop,
+        ).result()
         logger.info(f"Connected to {self.server_url}")
 
     def _send_command(self, command: dict, timeout: float = None) -> dict:
@@ -191,7 +218,13 @@ class YediEnv(gym.Env):
             return json.loads(raw)
 
         try:
-            response = self._loop.run_until_complete(_do())
+            # Submit the coroutine to the background loop and block this
+            # thread until it resolves. The inner asyncio.wait_for enforces
+            # the command timeout; we pass no outer timeout here so the
+            # concurrent.futures future does not fire a second one.
+            response = asyncio.run_coroutine_threadsafe(
+                _do(), self._loop,
+            ).result()
         except ConnectionClosed as e:
             # Drop the dead socket so the next call doesn't try to reuse it.
             self._ws = None
@@ -528,11 +561,25 @@ class YediEnv(gym.Env):
         return None
 
     def close(self):
-        if self._ws:
-            self._loop.run_until_complete(self._ws.close())
-            self._ws = None
+        if self._ws and self._loop and self._loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._ws.close(), self._loop,
+                ).result(timeout=5)
+            except Exception:
+                # Best-effort close — a dead socket is fine, we're shutting down.
+                pass
+        self._ws = None
         if self._loop:
-            self._loop.close()
+            if self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            if self._loop_thread is not None:
+                self._loop_thread.join(timeout=5)
+                self._loop_thread = None
+            try:
+                self._loop.close()
+            except Exception:
+                pass
             self._loop = None
 
     # ------------------------------------------------------------------

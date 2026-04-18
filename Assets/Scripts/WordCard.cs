@@ -9,27 +9,38 @@ using TMPro;
 public class WordCard : CardTypeBase
 {
     [SerializeField] public string wordSelected;
-
-    string[] wordListVerbs = new string[14] { "appear", "vanish", "contract", "expand",
-        "fail", "succeed", "help", "hinder", "separate", "join",
-        "build", "destroy", "conceal", "reveal" };
-    string[] wordListAdjectives = new string[14] { "empty", "full", "messy", "neat",
-        "boring", "fun", "young", "old", "private", "public",
-        "quiet", "loud", "sweet", "sour" };
-    string[] wordListPrepositions = new string[14] { "before", "after", "away from", "towards",
-        "in", "out", "against", "for", "below", "above",
-        "backward", "forward", "here", "there" };
-    string[] wordListNouns = new string[14] { "despair", "hope", "past", "present",
-        "poverty", "wealth", "success", "failure", "virtue", "vice",
-        "war", "peace", "bless", "curse" };
-    string[] wordListSynVerbs = new string[14] { "choose", "select", "close", "shut", "refuse", "reject",
-        "collect", "gather", "defend", "protect" , "forbid", "ban" ,"begin", "start"};
-    string[] wordListSynAdjectives = new string[14] { "happy", "amused", "little", "tiny", "good", "terrific",
-        "bad", "awful", "pretty", "handsome" , "angry", "annoyed" ,"mad", "crazy"};
-    string[] wordListGrammar = new string[14] { "I", "am", "you", "are", "she", "is",
-        "to", "be", "either", "or" , "neither", "nor" ,"not only", "but also"};
-    string[] wordListQuestions = new string[14] { "what", "this", "where", "here", "when", "now",
-        "why", "because", "who", "she" , "whom", "her" ,"how often", "rarely"};
+    
+    string[] wordListVerbs = new string[8] { "appear", "vanish", "contract", "expand", "fail", "succeed", "help", "hinder" };
+    string[] wordListAdjectives = new string[8] { "empty", "full", "messy", "neat", "boring", "fun", "young", "old" };
+    string[] wordListPrepositions = new string[8] { "before", "after", "in", "out", "against", "for", "below", "above"};
+    string[] wordListNouns = new string[8] { "despair", "hope", "past", "present", "poverty", "wealth", "success", "failure"};
+    string[] wordListSynVerbs = new string[8] { "choose", "select", "refuse", "reject", "collect", "gather", "forbid", "ban" };
+    string[] wordListSynAdjectives = new string[8] { "little", "tiny", "bad", "awful", "pretty", "handsome"  ,"mad", "crazy"};
+    string[] wordListGrammar = new string[8] { "I", "am", "you", "are", "she", "is", "either", "or" };
+    string[] wordListQuestions = new string[8] { "where", "here", "when", "now", "why", "because", "who", "she" };
+    
+    // 7 word pairs. It was too hard of a task.
+    // string[] wordListVerbs = new string[14] { "appear", "vanish", "contract", "expand",
+    //     "fail", "succeed", "help", "hinder", "separate", "join",
+    //     "build", "destroy", "conceal", "reveal" };
+    // string[] wordListAdjectives = new string[14] { "empty", "full", "messy", "neat",
+    //     "boring", "fun", "young", "old", "private", "public",
+    //     "quiet", "loud", "sweet", "sour" };
+    // string[] wordListPrepositions = new string[14] { "before", "after", "away from", "towards",
+    //     "in", "out", "against", "for", "below", "above",
+    //     "backward", "forward", "here", "there" };
+    // string[] wordListNouns = new string[14] { "despair", "hope", "past", "present",
+    //     "poverty", "wealth", "success", "failure", "virtue", "vice",
+    //     "war", "peace", "bless", "curse" };
+    // string[] wordListSynVerbs = new string[14] { "choose", "select", "close", "shut", "refuse", "reject",
+    //     "collect", "gather", "defend", "protect" , "forbid", "ban" ,"begin", "start"};
+    // string[] wordListSynAdjectives = new string[14] { "happy", "amused", "little", "tiny", "good", "terrific",
+    //     "bad", "awful", "pretty", "handsome" , "angry", "annoyed" ,"mad", "crazy"};
+    // string[] wordListGrammar = new string[14] { "I", "am", "you", "are", "she", "is",
+    //     "to", "be", "either", "or" , "neither", "nor" ,"not only", "but also"};
+    // string[] wordListQuestions = new string[14] { "what", "this", "where", "here", "when", "now",
+    //     "why", "because", "who", "she" , "whom", "her" ,"how often", "rarely"};
+    
     string[] characterList = new string[19] { "e", "t", "a", "o", "u", "i", "n", "s", "r", "h", "l", "d", "c" , "d", "p", "m", "g", "f", "b"};
 
     string[] wordList;
@@ -128,6 +139,20 @@ public class WordCard : CardTypeBase
 
     public float ComputeMergeWordGain(List<string> newWordList)
     {
+        return ComputeMergeWordGain(newWordList, out _);
+    }
+
+    // Same tier-bucketing as the single-arg overload, but also reports the
+    // raw multiplier the merge would apply (product of 0.9 / 2.0 / 2.5 ops
+    // in the verbs/nouns path, or the single 1.5 / 2.0 / 2.5 value in the
+    // scrabble path). Used by AgentBridge so the LLM preview can show the
+    // actual multiplier instead of the tier's "canonical" one — compound
+    // pair matches can push the real multiplier above 2.5 (e.g. 4.0 from
+    // two pair matches), and the tier-3 label "×2.5" was understating
+    // these cases to the agent.
+    public float ComputeMergeWordGain(List<string> newWordList, out float multiplier)
+    {
+        multiplier = 1f;
         if (modeWord != "scrabble")
         {
             if (newWordList.Count == 0 && wordSelectedList.Count == 0)
@@ -138,12 +163,14 @@ public class WordCard : CardTypeBase
             if (newWordList.Count == 1 && wordSelectedList.Count == 1 &&
                    newWordList[0] == nihilWord && wordSelectedList[0] == nihilWord)
             {
+                multiplier = manaIncreaseMultiplier3;
                 return 3f;
             }
 
             if (wordSelectedList.Count == 1 && wordSelectedList[0] == nihilWord &&
                 newWordList.Contains(nihilWord) == false)
             {
+                multiplier = manaReductionMultiplier;
                 return -1f;
             }
 
@@ -199,6 +226,8 @@ public class WordCard : CardTypeBase
 
             }
 
+            multiplier = multiplierWord;
+
             if (multiplierWord >= manaIncreaseMultiplier3)
             {
                 return 3f;
@@ -230,14 +259,17 @@ public class WordCard : CardTypeBase
             {
                 if (newWord.Length < 3 && newWord.Length > 1)
                 {
+                    multiplier = manaIncreaseMultiplier1;
                     return 1f;
                 }
                 else if (newWord.Length >= 3 && newWord.Length < 4)
                 {
+                    multiplier = manaIncreaseMultiplier2;
                     return 2f;
                 }
                 else if (newWord.Length >= 4)
                 {
+                    multiplier = manaIncreaseMultiplier3;
                     return 3f;
                 }
             }
@@ -246,7 +278,7 @@ public class WordCard : CardTypeBase
                 return 0f;
             }
         }
-        
+
         return 0f;
     }
 

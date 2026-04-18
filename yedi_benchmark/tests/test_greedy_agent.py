@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -358,15 +359,37 @@ def _make_env_with_response(payload: dict) -> YediEnv:
 
     Mirrors the helper in test_bridge_failures.py — we bypass __init__ and
     plug in a MagicMock websocket whose recv() returns the canned payload.
+    The loop runs on a daemon thread because _send_command uses
+    run_coroutine_threadsafe, which requires a loop running elsewhere.
     """
     env = YediEnv.__new__(YediEnv)
     env._loop = asyncio.new_event_loop()
+    ready = threading.Event()
+
+    def _runner():
+        asyncio.set_event_loop(env._loop)
+        ready.set()
+        env._loop.run_forever()
+
+    env._loop_thread = threading.Thread(target=_runner, daemon=True)
+    env._loop_thread.start()
+    ready.wait()
 
     fake_ws = MagicMock()
     fake_ws.send = AsyncMock()
     fake_ws.recv = AsyncMock(return_value=json.dumps(payload))
     env._ws = fake_ws
     return env
+
+
+def _close_env(env: YediEnv) -> None:
+    """Stop the background loop thread cleanly."""
+    loop = env._loop
+    loop.call_soon_threadsafe(loop.stop)
+    thread = getattr(env, "_loop_thread", None)
+    if thread is not None:
+        thread.join(timeout=2)
+    loop.close()
 
 
 class TestPreviewMergeWrapper:
@@ -396,7 +419,7 @@ class TestPreviewMergeWrapper:
             assert sent["source"] == "new"
             assert sent["target"] == "1"
         finally:
-            env._loop.close()
+            _close_env(env)
 
     def test_propagates_bridge_errors(self):
         from yedi_benchmark.yedi_env import BridgeDisconnectedError
@@ -408,4 +431,4 @@ class TestPreviewMergeWrapper:
             with pytest.raises(BridgeDisconnectedError, match="target at merge cap"):
                 env.preview_merge("new", "1")
         finally:
-            env._loop.close()
+            _close_env(env)
