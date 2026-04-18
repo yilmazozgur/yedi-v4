@@ -223,6 +223,19 @@ class RunRegistry:
             self._write(record)
             return record
 
+    def set_warning(self, run_id: str, message: str) -> RunRecord:
+        """Attach a warning message to the run without changing its status.
+
+        Used for partial failures: the run finished (some episodes
+        completed) but not cleanly, so the UI should surface the problem
+        without flagging the whole run as failed.
+        """
+        with self._lock:
+            record = self.get(run_id)
+            record.error = message
+            self._write(record)
+            return record
+
     def record_episode_error(
         self,
         run_id: str,

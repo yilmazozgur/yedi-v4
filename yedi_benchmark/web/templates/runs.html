@@ -137,13 +137,23 @@
         if (r.error) {
             rows.push(`<p class="badge badge-failed">${escapeHtml(r.error)}</p>`);
         }
+        // Group episode_errors by config for per-row display.
+        const errorsByConfig = {};
+        for (const e of (r.episode_errors || [])) {
+            errorsByConfig[e.config] = (errorsByConfig[e.config] || 0) + 1;
+        }
         rows.push(`<table class="table"><thead><tr><th>Config</th><th>Episodes</th><th>Mean max mana</th><th>Best</th><th>Std</th></tr></thead><tbody>`);
         for (const cfgName of (r.configs || [])) {
             const cr = (r.results || {})[cfgName];
+            const nFail = errorsByConfig[cfgName] || 0;
             if (cr) {
+                const nOk = (cr.episodes || []).length;
+                const epCell = nFail > 0
+                    ? `${nOk}/${r.episodes_per_config} <span class="badge badge-failed" title="${nFail} episode(s) failed">+${nFail} failed</span>`
+                    : `${nOk}/${r.episodes_per_config}`;
                 rows.push(`<tr>
                     <td class="col-mono">${escapeHtml(cfgName)}</td>
-                    <td>${(cr.episodes || []).length}/${r.episodes_per_config}</td>
+                    <td>${epCell}</td>
                     <td>${fmtNum(cr.mean_max_mana)}</td>
                     <td>${fmtNum(cr.best_max_mana)}</td>
                     <td>${fmtNum(cr.std_max_mana)}</td>

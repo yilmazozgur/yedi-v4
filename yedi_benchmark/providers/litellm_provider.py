@@ -32,7 +32,7 @@ RATE_LIMIT_BACKOFFS_SECONDS = (30.0, 60.0, 120.0)
 # present but content is None/""). This typically means the inference backend
 # (e.g. Together) hit a server-side timeout before the model produced its
 # first token — a transient failure that almost always resolves on retry.
-EMPTY_CONTENT_MAX_RETRIES = 2
+EMPTY_CONTENT_MAX_RETRIES = 4
 
 # How often to wake from a backoff sleep to check should_cancel(). Smaller =
 # more responsive cancel, more no-op wakeups. 1 second is plenty.
@@ -153,9 +153,12 @@ class LiteLLMProvider(LLMProvider):
                 if not choices:
                     raise ProviderError("Empty choices in LLM response")
                 content = choices[0].message.content
-                if content:
+                # Also treat whitespace-only responses as empty. Some
+                # backends return " " or "\n" on silent timeouts, which
+                # pass the truthiness check but strip to empty in the
+                # agent and then parse to a silent DRAW fallback.
+                if content and content.strip():
                     return str(content)
-                # Content is empty — retry if we have attempts left.
                 if empty_retry < EMPTY_CONTENT_MAX_RETRIES:
                     logger.warning(
                         "Empty content from model=%s (attempt %d/%d), retrying…",

@@ -73,6 +73,42 @@ class WorkerServer:
     def http_base(self) -> str:
         return f"http://localhost:{self.port}"
 
+    def _cpu_affinity_prefix(self) -> list[str]:
+        """Return ``[taskset, -c, <range>]`` to pin this worker's browser.
+
+        SwiftShader is multi-threaded and will spawn a worker thread per
+        logical CPU. Without pinning, N parallel workers all contend for
+        every core and the host load stays at 100% regardless of N. By
+        slicing cores into disjoint ranges we cap the contention so
+        throughput actually scales with worker count.
+
+        Returns an empty list if:
+          - taskset is unavailable (non-Linux hosts)
+          - we're running a single worker (no contention to solve)
+          - cpu_count can't be determined or is too small to slice
+        """
+        if self._total_workers <= 1:
+            return []
+        if shutil.which("taskset") is None:
+            return []
+        cpu_count = os.cpu_count() or 0
+        if cpu_count < self._total_workers * 2:
+            # Fewer than 2 cores per worker means pinning would just starve
+            # each instance. Let the OS scheduler handle it instead.
+            return []
+        cores_per_worker = cpu_count // self._total_workers
+        start = self._worker_index * cores_per_worker
+        # Last worker absorbs any remainder so no core goes unused.
+        if self._worker_index == self._total_workers - 1:
+            end = cpu_count - 1
+        else:
+            end = start + cores_per_worker - 1
+        core_range = f"{start}-{end}"
+        logger.info(
+            "Worker port %d: pinning to CPU cores %s", self.port, core_range,
+        )
+        return ["taskset", "-c", core_range]
+
     # ---- lifecycle ----
 
     def start(self, timeout: float = 30.0) -> None:
@@ -218,6 +254,9 @@ class WorkerServer:
                 "--use-angle=swiftshader",
                 "--ignore-gpu-blocklist",
             ])
+            # Pin to a CPU core subset so parallel SwiftShader instances
+            # don't all try to use every core at once.
+            cmd = self._cpu_affinity_prefix() + cmd
             env = os.environ.copy()
             env["DISPLAY"] = display
             self._browser_proc = subprocess.Popen(cmd, close_fds=True, env=env)

@@ -1620,6 +1620,21 @@ class LLMAgent(BaseAgent):
             ).strip()
             latency_ms = (_time.monotonic() - started) * 1000.0
 
+            # Guard: even after provider-level empty-content retries, a
+            # degenerate response can slip through (single character,
+            # whitespace that snuck past, response without any integer).
+            # _parse_action would silently return the first valid action
+            # here — effectively a free DRAW with no error trail. Raise
+            # instead so the except block below marks the step as a
+            # fallback with a clear reason.
+            from ..providers.base import ProviderError
+            if not response_text:
+                raise ProviderError("Empty response after provider retries")
+            if not re.search(r"\d", response_text):
+                raise ProviderError(
+                    f"Response contained no integer: {response_text[:80]!r}"
+                )
+
             # In conversational mode, record the assistant reply
             if self.mode == "conversational":
                 self._messages.append({"role": "assistant", "content": response_text})

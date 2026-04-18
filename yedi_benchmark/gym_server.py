@@ -740,7 +740,7 @@ def main():
             host=args.host,
             port=args.port,
             ws_ping_interval=30,
-            ws_ping_timeout=120,
+            ws_ping_timeout=300,
             log_level="warning",
         )
         return
@@ -753,12 +753,11 @@ def main():
     logger.info(f"Agent WebSocket: ws://{args.host}:{args.port}/ws/agent")
     logger.info(f"Agent HTTP API: http://{args.host}:{args.port}/api/agent/command")
 
-    # Increase WebSocket ping timeout for cloud LLM providers (Claude,
-    # GPT-4) whose API calls can take 10-30s. The default 20s ping timeout
-    # closes the game bridge while the agent thread is blocked waiting for
-    # an API response — even though the asyncio event loop is still alive.
-    # 120s is generous enough for any provider while still catching truly
-    # dead connections.
+    # Large ping timeout because two things block the browser's main
+    # thread for long stretches: cloud LLM calls (10-30s) and SwiftShader
+    # software WebGL in parallel worker setups (occasional multi-second
+    # stalls under CPU pressure). 300s absorbs both without letting
+    # genuinely dead connections linger forever.
     uvicorn.run(
         app,
         host=args.host,

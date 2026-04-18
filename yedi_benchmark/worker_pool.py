@@ -10,6 +10,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 from .worker_server import WorkerServer, WorkerStartupError
@@ -17,6 +18,13 @@ from .worker_server import WorkerServer, WorkerStartupError
 logger = logging.getLogger("yedi_benchmark.worker_pool")
 
 DEFAULT_BASE_PORT = 8100
+
+# Seconds to wait between consecutive browser launches when running many
+# workers. Firing 8+ Chrome+SwiftShader instances at the exact same moment
+# creates a WASM-compile storm that can push the slowest worker past the
+# game-connect timeout. A small stagger spreads the peak without
+# meaningfully extending total startup.
+_BROWSER_LAUNCH_STAGGER_SECONDS = 2.0
 
 
 class WorkerPool:
@@ -40,7 +48,7 @@ class WorkerPool:
     def start_all(
         self,
         server_timeout: float = 30.0,
-        browser_timeout: float = 90.0,
+        browser_timeout: float = 180.0,
     ) -> None:
         """Start all worker servers and their browser tabs.
 
@@ -60,8 +68,12 @@ class WorkerPool:
                 w.start(timeout=server_timeout)
                 self._workers.append(w)
 
-            # Phase 2: launch browser tabs (all at once — Chrome handles it).
-            for w in self._workers:
+            # Phase 2: launch browser tabs with a small stagger so the WASM
+            # compile + WebGL init storms don't all land at the same
+            # instant. First launch is immediate; subsequent ones wait.
+            for i, w in enumerate(self._workers):
+                if i > 0 and self.n_workers > 1:
+                    time.sleep(_BROWSER_LAUNCH_STAGGER_SECONDS)
                 w.launch_browser()
 
             # Phase 3: wait for all game connections.

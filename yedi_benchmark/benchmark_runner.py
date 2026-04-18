@@ -899,7 +899,14 @@ def _run_configs_sequential(
 
 
 def _finalize_run(record, rr, stats: _ConfigStats):
-    """Mark the run as COMPLETED or FAILED based on aggregated stats."""
+    """Mark the run as COMPLETED or FAILED based on aggregated stats.
+
+    Full failure (zero successes) → FAILED with error.
+    Partial failure (some successes, some failures) → COMPLETED with a
+    warning message so the dashboard surfaces the problem without hiding
+    the partial results.
+    Clean run → COMPLETED.
+    """
     from .registries import RunStatus
 
     if stats.successful_episodes == 0 and stats.failed_episodes > 0:
@@ -909,6 +916,14 @@ def _finalize_run(record, rr, stats: _ConfigStats):
             f"last error: {stats.last_bridge_error}",
         )
         return rr.get(record.id)
+
+    if stats.failed_episodes > 0:
+        total = record.episodes_total()
+        rr.set_warning(
+            record.id,
+            f"{stats.failed_episodes} of {total} episodes failed; "
+            f"last error: {stats.last_bridge_error}",
+        )
 
     final = rr.update_status(record.id, RunStatus.COMPLETED)
     logger.info(

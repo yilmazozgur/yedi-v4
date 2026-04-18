@@ -167,4 +167,17 @@ def run_benchmark_parallel(
             rr.update_status(record.id, RunStatus.CANCELLED)
             return rr.get(record.id)
 
+        # Non-cancellation worker errors mean a whole config was aborted
+        # mid-way (e.g. consecutive bridge failures tripped the abort
+        # threshold). Surface a warning so the status isn't silently
+        # "completed" when we actually lost data.
+        non_cancel = [e for e in worker_errors if not isinstance(e, ProviderCancelled)]
+        if non_cancel:
+            last = str(non_cancel[-1])[:200]
+            rr.set_warning(
+                record.id,
+                f"{len(non_cancel)} worker(s) aborted a config mid-run; "
+                f"last error: {last}",
+            )
+
     return _finalize_run(record, rr, stats)
