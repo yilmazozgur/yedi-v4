@@ -71,6 +71,16 @@ public class AgentBridge : MonoBehaviour
     // start_game.perfect_memory.
     bool perfectMemory = false;
 
+    // Turn-based memory visibility. We track the agent-turn (actionCount) at
+    // which each CardFrame was last "revealed" by a draw or merge. Hidden
+    // status is derived at serialization time as (last_revealed_turn <
+    // actionCount), independent of the MemoryCard wall-clock HideCardInfo
+    // coroutine. This removes the ~33ms leak where a state dump captured the
+    // card before the visual 2s-hide coroutine had a chance to run and keeps
+    // the hidden set deterministic across LLM inference latencies.
+    // The visual coroutine still runs for the human-play path.
+    Dictionary<CardFrame, int> _lastRevealedTurn = new Dictionary<CardFrame, int>();
+
     // When true, Time.timeScale is forced to 0 between agent actions so that
     // mana drain and the episode timer do NOT advance while the agent is
     // thinking. This is the fairness invariant for model comparisons: a slow
@@ -161,6 +171,9 @@ public class AgentBridge : MonoBehaviour
     void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         refsReady = false;
+        // Stale CardFrame references from the unloaded scene — drop them so
+        // the turn-based memory dict doesn't balloon across episodes.
+        _lastRevealedTurn.Clear();
         StartCoroutine(CacheReferencesDelayed());
     }
 
@@ -438,6 +451,73 @@ public class AgentBridge : MonoBehaviour
     }
 
     // ------------------------------------------------------------------
+    // Turn-based memory helpers
+    // ------------------------------------------------------------------
+
+    bool IsMemoryModeActive()
+    {
+        return !string.IsNullOrEmpty(HeptagonController.modeMemory);
+    }
+
+    string GetMemoryMode()
+    {
+        return HeptagonController.modeMemory ?? "";
+    }
+
+    void RevealCardFrame(CardFrame frame)
+    {
+        if (frame == null) return;
+        _lastRevealedTurn[frame] = actionCount;
+    }
+
+    void RevealAllOccupiedCards()
+    {
+        RevealCardFrame(GetCardFrame(slotNew));
+        if (numberedSlots != null)
+        {
+            for (int i = 0; i < numberedSlots.Length; i++)
+                RevealCardFrame(GetCardFrame(numberedSlots[i]));
+        }
+    }
+
+    /// <summary>
+    /// Turn-based hidden check: a card is hidden unless it was revealed on
+    /// the current turn (actionCount). Pre-first-action state (actionCount==0)
+    /// is always fully visible so the agent can see the starting hand.
+    /// </summary>
+    bool IsTurnBasedHidden(CardFrame frame)
+    {
+        if (frame == null) return false;
+        if (!IsMemoryModeActive()) return false;
+        if (actionCount == 0) return false;
+        int turn;
+        if (!_lastRevealedTurn.TryGetValue(frame, out turn)) return true;
+        return turn < actionCount;
+    }
+
+    /// <summary>
+    /// Apply the per-mode reveal policy after an action completes, BEFORE
+    /// state serialization. actionKind in {"draw","merge","move_empty","sell"}.
+    /// "every action" mode reveals all occupied cards on any action.
+    /// "show one" (and other non-"every action" memory modes) only reveal
+    /// the involved card on a draw or merge.
+    /// </summary>
+    void ApplyPostActionReveal(string actionKind, CardFrame involved = null)
+    {
+        if (!IsMemoryModeActive()) return;
+        if (GetMemoryMode() == "every action")
+        {
+            RevealAllOccupiedCards();
+            return;
+        }
+        if (actionKind == "draw")
+            RevealCardFrame(GetCardFrame(slotNew));
+        else if (actionKind == "merge")
+            RevealCardFrame(involved);
+        // "move_empty" and "sell" do not reveal anything in show-one mode.
+    }
+
+    // ------------------------------------------------------------------
     // Action execution
     // ------------------------------------------------------------------
 
@@ -566,12 +646,14 @@ public class AgentBridge : MonoBehaviour
     IEnumerator SendStateAfterDrawReady(int seq)
     {
         yield return WaitForDrawReady();
+        ApplyPostActionReveal("draw");
         SafeSendState(seq, "draw_card");
     }
 
     IEnumerator EndGameAfterDrawReady(int seq)
     {
         yield return WaitForDrawReady();
+        ApplyPostActionReveal("draw");
         SafeSendState(seq, "draw_card");
         yield return null;
         try
@@ -652,15 +734,23 @@ public class AgentBridge : MonoBehaviour
 
         // If a merge happened, the target slot now holds the moving card
         // instead of cardOther. Destroy the orphaned victim synchronously.
+        bool mergeHappened = false;
         if (cardOther != null && cardOther.gameObject != null &&
             targetSlot.GetCardObject() != cardOther)
         {
+            mergeHappened = true;
             DestroyImmediate(cardOther.gameObject);
             if (cardFrameOther != null && cardFrameOther.gameObject != null)
                 DestroyImmediate(cardFrameOther.gameObject);
         }
 
         IncrementAction();
+
+        // Reveal BEFORE scheduling the state send so the post-action state
+        // dump shows the expected visibility set. `frame` is the surviving
+        // card (now sitting in targetSlot on a merge; still in targetSlot
+        // on a plain move-to-empty).
+        ApplyPostActionReveal(mergeHappened ? "merge" : "move_empty", frame);
 
         if (IsStepLimitReached())
             StartCoroutine(EndGameAfterFrames(cmd.seq, 2));
@@ -764,6 +854,11 @@ public class AgentBridge : MonoBehaviour
 
         IncrementAction();
 
+        // Apply reveal BEFORE scheduling the state send so remaining cards are
+        // visible under "every action" mode. Sell never reveals anything under
+        // show-one mode — the sold card is gone.
+        ApplyPostActionReveal("sell");
+
         if (IsStepLimitReached())
             StartCoroutine(EndGameAfterFrames(cmd.seq, 2));
         else
@@ -856,18 +951,15 @@ public class AgentBridge : MonoBehaviour
         return card.GetCardFrame();
     }
 
-    // Mirrors the hidden detection in SerializeSlot — when MemoryCard is on
-    // and the background sprite has been raised above the dim layers, the
-    // card face is hidden from the player and we treat it as opaque to the
-    // agent too. Used by ComputeMergePreviews to drop entries that would
-    // otherwise leak the underlying card identity through the gain math.
+    // Mirrors the hidden detection in SerializeSlot — turn-based: a card is
+    // opaque to the agent unless it was drawn or merged on the current turn
+    // (per ApplyPostActionReveal). Used by ComputeMergePreviews to drop
+    // entries that would otherwise leak the underlying card identity through
+    // the gain math.
     bool IsCardHidden(CardFrame frame)
     {
         if (frame == null || frame.memoryCard == null) return false;
-        var bg = frame.GetComponentInChildren<CardFrameBackground>();
-        if (bg == null) return false;
-        var sr = bg.GetComponent<SpriteRenderer>();
-        return sr != null && sr.sortingOrder >= 13;
+        return IsTurnBasedHidden(frame);
     }
 
     // Compute the per-dimension gain tier for a hypothetical merge, using the
@@ -937,8 +1029,11 @@ public class AgentBridge : MonoBehaviour
         // scene with no ManaDisplay/GameTimer → permanent "Game not ready").
         StopAllCoroutines();
 
-        // Reload the gameplay scene for a clean reset
+        // Reload the gameplay scene for a clean reset. Zero the turn counter
+        // so IsTurnBasedHidden's "actionCount == 0 → fully visible" rule
+        // applies to the initial observation of the fresh episode.
         Debug.Log("[AgentBridge] Resetting — reloading gameplay scene");
+        actionCount = 0;
         Time.timeScale = 1;
         SceneManager.LoadScene("Level 1 Space for Unity");
         SendAck(cmd.seq, true);
@@ -1203,18 +1298,13 @@ public class AgentBridge : MonoBehaviour
         msg.number_active = frame.numberActive;
 
         // Memory: check if card is hidden FIRST so we can mask the dim values
-        // before they get serialized. The "hidden" signal is the background
-        // sprite renderer's sortingOrder being raised above the dim layers
-        // (>= 13) — that's how MemoryCard hides the card visually.
+        // before they get serialized. Turn-based: a card is hidden unless it
+        // was revealed on the current turn by a draw or merge (see
+        // ApplyPostActionReveal). This is independent of the MemoryCard
+        // HideCardInfo 2s wall-clock coroutine, which now only drives the
+        // visual for the human-play path.
         if (frame.memoryCard != null)
-        {
-            var bg = frame.GetComponentInChildren<CardFrameBackground>();
-            if (bg != null)
-            {
-                var sr = bg.GetComponent<SpriteRenderer>();
-                msg.memory_hidden = (sr != null && sr.sortingOrder >= 13);
-            }
-        }
+            msg.memory_hidden = IsTurnBasedHidden(frame);
 
         // If the card is currently hidden by Memory mode and the run did NOT
         // opt into perfect_memory, drop every dim value here. The agent must
