@@ -10,6 +10,9 @@
 # MemoryCaptures
 /[Mm]emoryCaptures/
 
+# Unity Editor–generated UIElements schema
+/UIElementsSchema/
+
 # Recordings
 /[Rr]ecordings/
 

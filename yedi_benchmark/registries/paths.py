@@ -41,3 +41,17 @@ def get_runs_dir() -> Path:
         path = _PROJECT_ROOT / "logs" / "runs"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def get_logs_root() -> Path:
+    """Return the directory where per-episode artifacts live.
+
+    Episode paths stored in RunRecord.results[*].episodes[*].episode_log_path
+    are recorded relative to the project root as ``logs/episode_...``;
+    this helper lets callers resolve and safety-check those paths when
+    cascading delete.
+    """
+    override = os.environ.get("YEDI_LOGS_ROOT")
+    if override:
+        return Path(override).resolve()
+    return (_PROJECT_ROOT / "logs").resolve()

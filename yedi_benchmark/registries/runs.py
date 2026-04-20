@@ -165,12 +165,22 @@ class RunRegistry:
             records.sort(key=lambda r: r.started_at, reverse=True)
             return records
 
-    def delete(self, run_id: str) -> None:
+    def delete(self, run_id: str) -> RunRecord:
+        """Remove the run record from disk and return the deleted record.
+
+        The returned record is used by callers (routes) to cascade cleanup
+        of per-episode artifacts under ``logs/``. Cascading here would
+        tangle the registry with a filesystem layout it otherwise does not
+        know about, so we return the record and let the caller decide.
+        """
         with self._lock:
             path = self._path_for(run_id)
             if not path.exists():
                 raise RunRegistryError(f"run not found: {run_id}")
+            with path.open("r", encoding="utf-8") as f:
+                record = RunRecord.model_validate_json(f.read())
             path.unlink()
+            return record
 
     def reconcile_orphans(self, reason: Optional[str] = None) -> list[str]:
         """Mark any PENDING/RUNNING records on disk as FAILED.

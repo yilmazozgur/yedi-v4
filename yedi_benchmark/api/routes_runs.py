@@ -8,6 +8,8 @@ read back from the run registry.
 from __future__ import annotations
 
 import logging
+import shutil
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -16,6 +18,7 @@ from ..bridge_status import BridgeStatus
 from ..providers.registry import smoke_test_agent
 from ..registries import AgentRegistry, RunRecord, RunRegistry, RunStatus
 from ..registries.agents import AgentRegistryError
+from ..registries.paths import get_logs_root
 from ..registries.runs import RunRegistryError
 from ..run_trace import get_run_trace_store
 from .deps import get_agent_registry, get_bridge_status, get_run_registry
@@ -184,6 +187,47 @@ def cancel_run(
     return {"cancelled": True, "run_id": run_id}
 
 
+def _cascade_episode_dirs(record: RunRecord) -> tuple[int, int]:
+    """Remove every episode artifact dir referenced by the record.
+
+    Returns (removed, skipped). Skipped covers paths that are missing,
+    empty, or resolve outside the logs root (defence against malformed
+    records).
+    """
+    logs_root = get_logs_root()
+    removed = 0
+    skipped = 0
+    for cfg in (record.results or {}).values():
+        for ep in (cfg.episodes or []):
+            rel = getattr(ep, "episode_log_path", None)
+            if not rel:
+                skipped += 1
+                continue
+            abs_path = (logs_root.parent / rel).resolve()
+            try:
+                abs_path.relative_to(logs_root)
+            except ValueError:
+                logger.warning(
+                    "refusing rmtree outside logs_root: run=%s path=%s",
+                    record.id, rel,
+                )
+                skipped += 1
+                continue
+            if not abs_path.is_dir():
+                skipped += 1
+                continue
+            try:
+                shutil.rmtree(abs_path)
+                removed += 1
+            except OSError as e:
+                logger.warning(
+                    "episode dir rmtree failed: run=%s path=%s err=%s",
+                    record.id, abs_path, e,
+                )
+                skipped += 1
+    return removed, skipped
+
+
 @router.delete("/{run_id}", status_code=204, response_class=Response)
 def delete_run(
     run_id: str,
@@ -193,10 +237,15 @@ def delete_run(
     if executor.get_active_run_id() == run_id:
         raise HTTPException(409, "cannot delete a run that is currently running")
     try:
-        reg.delete(run_id)
+        record = reg.delete(run_id)
     except RunRegistryError as e:
         raise HTTPException(404, str(e))
     get_run_trace_store().drop(run_id)
+    removed, skipped = _cascade_episode_dirs(record)
+    logger.info(
+        "deleted run %s (cascaded %d episode dirs, skipped %d)",
+        run_id, removed, skipped,
+    )
     return Response(status_code=204)
 
 
