@@ -27,6 +27,12 @@
 \begin{document}
 \maketitle
 
+\begin{center}
+\small
+Code and benchmark: \url{https://github.com/yilmazozgur/yedi-v4}\\
+Video walkthroughs of the original mobile game: \url{https://www.youtube.com/@mindfreegames7459}
+\end{center}
+
 % ======================================================================
 \begin{abstract}
 \plan{%
@@ -255,190 +261,496 @@ and native screenshot capture.
 \section{The Yedi Game}
 \label{sec:game}
 
-\plan{%
-  Explain the game to a reader who has never seen it. This section should
-  be self-contained. Use a figure showing the game board layout.
-}
+Yedi is a single-player card game originally developed as a cognitive-training
+app on mobile platforms. Each card carries attributes across up to seven
+independent cognitive dimensions --- four perceptual/reasoning dimensions
+(\emph{number, color, shape, word}) and three secondary dimensions
+(\emph{beat/music, memory, motor}). Players merge cards to grow their score
+(``mana''), with each active dimension contributing an \emph{independent}
+multiplier to the merge outcome. The multipliers compose multiplicatively
+across dimensions, so optimizing the compound score requires balanced
+competence across every active dimension: a single weak decision anywhere in
+the cognitive stack collapses an otherwise strong merge. This section
+describes the game mechanics that we inherit verbatim in the benchmark; the
+benchmark-specific interface is deferred to Section~\ref{sec:benchmark}.
+Readers who prefer to see the game played before reading its rules may
+consult the video walkthroughs released by the original
+developer.\footnote{\url{https://www.youtube.com/@mindfreegames7459}}
 
 \subsection{Board and Actions}
-\plan{%
-  \begin{itemize}
-    \item Board: 1 ``new'' slot, 5 build slots, sell action.
-    \item Actions: DRAW (spawn card), MOVE/MERGE (place or combine),
-      SELL (convert card mana to score). 37 discrete actions total.
-    \item Two scarce resources: mana (spent on draws, recovered on sells)
-      and moves (fixed budget per game, typically 100).
-    \item Score = peak mana ever reached during the game.
-  \end{itemize}
-  \todo{Figure: game board screenshot with annotations.}
-}
+\label{sec:board}
 
-\subsection{Dimensions and Modes}
-\plan{%
-  \begin{itemize}
-    \item Each card carries attributes across 4 dimensions: number, color,
-      shape, word. Each dimension has multiple sub-modes that change the
-      merge semantics.
-    \item Number: add, multiply, GCD, sort, trigonometry, vector, interval.
-    \item Color: additive mixing, subtractive mixing, grayscale, text-color.
-    \item Shape: triangle rotation, rectangle, Kanizsa illusions, Hanoi,
-      sphere, triple.
-    \item Word: antonyms (verbs, nouns, adjectives), synonyms, grammar
-      pairs, question-answer pairs, scrabble.
-    \item 3 additional dimensions exist in the full game (Music/beat timing,
-      Memory/hidden cards, Motor/drag accuracy) but are not the primary
-      focus of this benchmark. Memory is partially supported (perfect\_memory
-      ablation flag).
-  \end{itemize}
-  \todo{Table: all modes with brief description and neutral/identity card.}
-}
+The board consists of one \emph{new} slot that receives freshly drawn cards,
+five numbered \emph{build} slots that hold cards available for merging, and
+one \emph{sell} slot that converts a card back into mana. The player issues
+one of three action types per turn:
+
+\begin{itemize}
+  \item \textbf{Draw}: spawn a new card in the new slot at a fixed mana cost
+    (10 mana per draw).
+  \item \textbf{Move/Merge}: drag a card from its current slot to a target
+    build slot. If the target is empty, the card is placed. If it is
+    occupied, the two cards merge: the moving card is consumed and the
+    target card's mana is multiplied by the product of per-dimension
+    merge gains.
+  \item \textbf{Sell}: drag a card to the sell slot. The card is destroyed
+    and its current mana is refunded to the player.
+\end{itemize}
+
+Each card has a merge cap (3 merges at the easiest difficulty, rising to 5
+at the hardest): once reached, the card must be sold to free the slot. The
+player's score at any moment is the peak mana ever reached during the
+episode, matching the scoring system used by the mobile app's leaderboards.
+
+\subsection{Cognitive Dimensions}
+\label{sec:dimensions}
+
+Each dimension has multiple \emph{sub-modes} that change what constitutes a
+good merge. Table~\ref{tab:dimensions} lists the four primary dimensions
+used throughout our benchmark; the three secondary dimensions are
+summarised below.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Dimension} & \textbf{Sub-mode} & \textbf{Merge rule (informal)} \\
+\midrule
+\textbf{Number (Gq)} & add & $x + y = 0$ is perfect (number pair) \\
+ & multiply & $x \cdot y = 1$ is perfect \\
+ & gcd & $\gcd(x, y) > 1$ is perfect \\
+ & trigon & trig identity combos \\
+ & interval, vector, sort & sub-domain rules (see Appendix) \\
+\midrule
+\textbf{Color (Gv)} & add & RGB additive mixing to white is perfect \\
+ & subtract & CMY subtractive mixing to black is perfect \\
+ & gray & sum of colour indices $>9 \Rightarrow$ white \\
+ & text & Stroop: text word must match fill colour \\
+\midrule
+\textbf{Shape (Gv/Gf)} & triangle, rectangle, triple & shape-rotation matching \\
+ & sphere (11 shapes) & 3D orientation matching \\
+ & kanizsa & illusory-contour completion \\
+ & hanoi (17 shapes) & tower-of-Hanoi ordering (time-extended) \\
+\midrule
+\textbf{Word (Gc)} & verbs, nouns, adjectives, prepositions & antonym pairs \\
+ & synVerbs, synAdjectives & synonym pairs \\
+ & grammar, questions & grammatical/QA pairing \\
+ & scrabble & concatenation forms a valid word \\
+\bottomrule
+\end{tabular}
+\caption{Primary cognitive dimensions and their sub-modes. Each dimension
+contributes an \emph{independent} multiplier to a merge; the merge outcome
+is the product across active dimensions. Parenthetical labels map each
+dimension loosely to Cattell--Horn--Carroll (CHC) cognitive
+factors~\citep{reddy2025chcllm}.}
+\label{tab:dimensions}
+\end{table}
+
+The three secondary dimensions add orthogonal pressures that can be stacked
+on top of any primary-dimension configuration:
+
+\begin{itemize}
+  \item \textbf{Beat (Ga)}: merges gain a multiplier bonus or penalty
+    depending on how close the drop is to the on-beat phase of a
+    rhythmic pulse ($0.03$-wide ``perfect'' window, $0.5$-wide penalty
+    band). Six beat patterns from double (1.8\,s period) to five
+    (4.32\,s period).
+  \item \textbf{Memory (Gsm)}: after a short visibility window, card face
+    values are hidden behind a back sprite. The player must remember
+    which slot held which card. Three sub-modes control the reveal
+    policy (Section~\ref{sec:config}).
+  \item \textbf{Motor (Gps)}: merges gain a tier bonus based on drag
+    trajectory quality (speed, endpoint accuracy, how many intermediate
+    slots were visited). Modelled in the benchmark via Fitts-law
+    noise injection (Section~\ref{sec:env}).
+\end{itemize}
 
 \subsection{Merge Mechanics}
 \label{sec:merge}
-\plan{%
-  This is the core mechanic and the key thing that makes Yedi interesting.
-  Explain carefully.
-  \begin{itemize}
-    \item When two cards merge, each active dimension independently produces
-      a multiplier applied to the target card's mana.
-    \item Multiplier tiers: PERFECT (2.5$\times$), GREAT (2.0$\times$),
-      GOOD (1.5$\times$), OK ($\sim$1.1$\times$), NEUTRAL (1.0$\times$),
-      BAD (0.9$\times$), TERRIBLE (0.7$\times$).
-    \item Multipliers are applied sequentially across dimensions:
-      $\text{mana}_{\text{new}} = \text{mana}_{\text{old}} \times
-      \prod_{d \in \text{active}} m_d$.
-    \item Key insight: one BAD dimension ($m_d = 0.9$) washes out two
-      GREAT dimensions ($2.0 \times 2.0 \times 0.9 = 3.6$ vs.\
-      $2.0 \times 2.0 \times 2.0 = 8.0$). The worst dimension bounds
-      the outcome.
-    \item Each card has a 3-merge cap. After 3 merges the card must be sold.
-    \item Worked example with concrete numbers showing the exponential
-      growth from chained perfect merges vs.\ the collapse from one
-      bad merge.
-  \end{itemize}
-  \todo{Figure: merge multiplier interaction diagram.}\\
-  \todo{Table: concrete example of 3-merge chain across 1, 2, 3, 4 dims.}
-}
+
+The multiplicative compound-reasoning bottleneck is the central game-design
+decision that motivates Yedi as a benchmark. When two cards merge, each
+active dimension $d$ independently produces a discrete \emph{gain tier}
+$g_d \in \{-1, 0, 1, 2, 3\}$ evaluated from the dimension's merge rule.
+Tiers map to multipliers via a difficulty-dependent table
+(Table~\ref{tab:tiers}), and the surviving card's mana updates as
+
+\begin{equation}
+\label{eq:merge}
+\text{mana}_{\text{new}} \;=\; \text{mana}_{\text{old}} \;\cdot\; \prod_{d \in \mathcal{A}} \mu(g_d)
+\end{equation}
+
+where $\mathcal{A}$ is the set of active dimensions for the configuration
+and $\mu(\cdot)$ is the tier-to-multiplier map from Table~\ref{tab:tiers}.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}clccc@{}}
+\toprule
+\textbf{Tier $g_d$} & \textbf{Label} & $\mu$ (Diff 0) & $\mu$ (Diff 1) & $\mu$ (Diff 2) \\
+\midrule
+$3$  & perfect  & $2.5$ & $2.0$ & $1.7$ \\
+$2$  & great    & $2.0$ & $1.5$ & $1.3$ \\
+$1$  & ok       & $1.5$ & $1.2$ & $1.1$ \\
+$0$  & neutral  & $1.0$ & $1.0$ & $1.0$ \\
+$-1$ & bad      & $0.9$ & $0.8$ & $0.7$ \\
+\bottomrule
+\end{tabular}
+\caption{Per-dimension gain tier to multiplier. Higher in-game difficulty
+compresses the payoff for perfect play and sharpens the penalty for bad
+merges. The benchmark uses Diff~0 by default.}
+\label{tab:tiers}
+\end{table}
+
+The consequence of the product form in Equation~\eqref{eq:merge} is that
+\emph{no strong dimension compensates for a weak one}. Consider a 4-dim
+configuration in which three dimensions merge at tier~3 (``perfect'') and
+one at tier~$-1$ (``bad''). The compound multiplier is
+$2.5 \cdot 2.5 \cdot 2.5 \cdot 0.9 \approx 14.06$, versus
+$2.5^4 \approx 39.06$ for fully perfect play --- a $64\%$ loss driven
+entirely by a single weak axis. In contrast, an additive scoring scheme
+with the same per-dimension values gives $9.1$ vs.\ $10.0$, a $9\%$ loss.
+The multiplicative form is the formal ground for Yedi's claim as a
+multi-objective reasoning benchmark: agents that reason as if score were a
+mean will under-optimise, and the gap widens with each additional active
+dimension.
+
+Table~\ref{tab:chain} makes the compounding explicit. A 3-merge chain that
+holds tier~3 across all active dimensions grows mana from a nominal 10 to
+over 600 in the 4-dim case; a single tier~$-1$ merge partway through the
+chain cuts the final mana by more than half.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Active dims} & \textbf{Tier~3 chain of 3} & \textbf{With one tier~$-1$} & \textbf{Ratio} \\
+\midrule
+1 dim & $10 \cdot 2.5^3 = 156.25$ & $10 \cdot 2.5^2 \cdot 0.9 = 56.25$ & $0.36$ \\
+2 dim & $10 \cdot 2.5^6 = 2441.4$ & $10 \cdot 2.5^5 \cdot 0.9 \cdot 2.5 \approx 879$ & $0.36$ \\
+3 dim & $10 \cdot 2.5^9 \approx 38{,}147$ & $\approx 13{,}733$ & $0.36$ \\
+4 dim & $10 \cdot 2.5^{12} \approx 596{,}046$ & $\approx 214{,}577$ & $0.36$ \\
+\bottomrule
+\end{tabular}
+\caption{Compound growth from a 3-merge chain. Column 2: all dimensions
+tier~3 every merge. Column 3: one merge has a tier~$-1$ gain on one
+dimension (others still tier~3). The per-merge hit is the same (a $0.36$
+ratio); with 4 dimensions active it costs nearly $400{,}000$ mana.}
+\label{tab:chain}
+\end{table}
+
+\todo{Figure: game-board screenshot with slot + dimension annotations.}
 
 
 % ======================================================================
 \section{Benchmark Design}
 \label{sec:benchmark}
 
-\subsection{Environment}
-\plan{%
-  \begin{itemize}
-    \item Gymnasium interface: \texttt{reset()}/\texttt{step(action)}
-      returning \texttt{(obs, reward, terminated, truncated, info)}.
-    \item Action space: \texttt{Discrete(37)} --- 0=draw, 1--30=move/merge,
-      31--36=sell.
-    \item Observation: metadata dict (mana, slots with card attributes,
-      action mask) or screenshot (960$\times$540 PNG).
-    \item WebSocket bridge to Unity WebGL ensures merge scoring uses the
-      identical C\# code as the real game --- no re-implementation drift.
-    \item Deterministic seeding for reproducibility.
-  \end{itemize}
-  \todo{Architecture diagram: Python env $\leftrightarrow$ WebSocket
-    $\leftrightarrow$ Unity.}
-}
+The benchmark wraps the Yedi game described in Section~\ref{sec:game} in a
+Gymnasium-compatible environment that exposes the same merge rules, scoring
+system, and card generators used by the mobile app. The full implementation
+--- Unity WebGL build, Python environment, agent wrappers, benchmark
+configurations, and analysis scripts --- is released as an open-source
+package.\footnote{\url{https://github.com/yilmazozgur/yedi-v4}} Crucially, all scoring
+logic remains in the Unity~C\# implementation; the Python side is a thin
+control layer. This design trades a modest per-step overhead (WebSocket
+round-trip) for complete fidelity to the reference implementation, so that
+benchmark numbers are directly comparable with human leaderboard scores.
 
-\subsection{Configurations}
-\plan{%
-  \begin{itemize}
-    \item 40+ predefined configurations spanning 1--4 active dimensions.
-    \item Difficulty tiers: easy (1 dim, simple modes), medium (2 dims),
-      hard (3--4 dims, complex modes).
-    \item Each config specifies which dimensions are active and which
-      sub-mode each uses.
-    \item Standardized episode length (100 moves), starting mana (200),
-      merge cap (3).
-  \end{itemize}
-  \todo{Table: representative configs used in experiments, with mode
-    combination and difficulty tier.}
-}
+\subsection{Environment}
+\label{sec:env}
+
+The environment exposes a standard Gymnasium interface
+(\texttt{reset()}/\texttt{step(action)}) whose step returns the observation,
+a shaped reward, a \texttt{terminated} flag for game-over, a
+\texttt{truncated} flag for the step cap, and an \texttt{info} dict with
+full game state. A Python FastAPI process holds a WebSocket channel to a
+headless Chromium that runs the Unity WebGL build; on each step the bridge
+(i) freezes game time, (ii) submits the action via an injected JavaScript
+hook, (iii) awaits the Unity-side callback with the updated state, and
+(iv) resumes game time. Pausing between actions removes wall-clock
+pressure, so model latency never confounds reasoning quality (motor noise
+and beat timing are re-introduced explicitly as ablation knobs below).
+
+The action space is \texttt{Discrete}(37): action $0$ draws a card into the
+new slot; actions $1\ldots30$ encode a \textsc{move/merge} from source slot
+$s \in \{\text{new}, 1, 2, 3, 4, 5\}$ to destination slot
+$d \in \{1, 2, 3, 4, 5\}$ as $a = 1 + 5s + (d{-}1)$; actions $31\ldots36$
+encode a \textsc{sell} from source slot $s$. Every observation carries a
+\texttt{MultiBinary(37)} \emph{action mask} derived from current slot
+occupancy, merge caps, and game-over state, so agents never need to reason
+about low-level legality. Episodes truncate at a configurable step cap
+(default $100$), replacing the mobile app's wall-clock timer; termination
+occurs when a draw would drop mana below zero. Random seeding is exposed end
+to end: the seed controls card spawn order and any stochastic merge effects,
+so every run is replayable.
 
 \subsection{Observation Modes}
-\plan{%
-  \begin{itemize}
-    \item \textbf{Metadata mode}: structured text description of each slot's
-      card attributes (Num=3, Color=Red, Shape=triangle-up, Word=help),
-      mana values, merge counts. All information is explicit.
-    \item \textbf{Vision mode}: 960$\times$540 screenshot of the game board.
-      The model must extract card attributes visually. Same underlying game
-      state, same action space.
-    \item Running the same config in both modes isolates the ``vision tax''
-      --- the performance drop attributable to perceptual grounding rather
-      than strategic reasoning.
-    \item \textbf{Merge preview ablation}: optionally expose the bridge's
-      pre-computed merge scores to the agent. Measures whether the model's
-      bottleneck is evaluation (computing merge quality) or planning
-      (choosing which merge to execute given known quality).
-  \end{itemize}
-}
+\label{sec:obs}
+
+The same game state is rendered in one of two channels:
+\begin{itemize}
+  \item \textbf{Metadata.} A structured dump of the seven slots with each
+    card's active-dimension attributes (e.g.\ \texttt{Num=3, Color=red,
+    Shape=triangle-up, Word=help}), current and maximum mana, merge counter
+    and cap, the list of active dimensions and their sub-modes, the step
+    counter, and the action mask. All information required to reason about
+    the next merge is explicit; nothing is hidden except state the rules
+    hide (the Memory dimension).
+  \item \textbf{Vision.} A $960{\times}540$ PNG screenshot of the live
+    canvas alongside a minimal HUD (current mana, step count, action mask).
+    Card attributes are \emph{not} printed; the model must read them from
+    pixels. The board layout, slot positions, and rendering pipeline match
+    the human mobile-app experience.
+\end{itemize}
+
+Orthogonal to the observation channel, the benchmark offers three
+\emph{history modes} that control what an agent sees across successive
+steps: \textsc{stateless} (each step is a fresh prompt, no prior context),
+\textsc{conversational} (the episode accumulates as a rolling
+user-assistant chat), and \textsc{compact} (a terminal-style transcript
+that appends one fixed-width line per completed step summarising the action
+and resulting slot state). Compact mode is designed to give long-horizon
+reasoning to LLMs whose cost or context budget precludes a full
+conversational history; it also lets us decouple \emph{memory} from
+\emph{dialogue context} when analysing failure modes. All three modes are
+available for metadata and vision observations, yielding six $($observation,
+history$)$ combinations that a single config can be swept across.
+
+\subsection{Configurations}
+\label{sec:config}
+
+A \emph{configuration} fixes which dimensions are active and which sub-mode
+each dimension uses (e.g.\ \texttt{\{number:add, color:add\}}). We provide a
+curated library of 36 configurations grouped into four difficulty tiers
+(Table~\ref{tab:config-summary}); the full list is catalogued in
+Appendix~\ref{app:configs}.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrll@{}}
+\toprule
+\textbf{Tier} & \textbf{\# configs} & \textbf{Dimensions active} & \textbf{Sub-modes used} \\
+\midrule
+Easy      & 8  & 1                     & simplest per-dimension (add, triangle, verbs, \ldots) \\
+Medium    & 10 & 1 hard mode, or 2 & gcd, gray, kanizsa, grammar; first 2-D and memory combos \\
+Hard      & 10 & 2--3 with hard modes  & Stroop, tower-of-Hanoi, scrabble, 3-D add combos \\
+BrainFry  & 8  & 3--5 hard modes       & the Yedi signature 4-D, memory + 4-D, all-hard 5-D \\
+\bottomrule
+\end{tabular}
+\caption{Configuration tiers. Each tier escalates along two axes: the
+number of active dimensions, and the difficulty of the per-dimension
+sub-mode. Easy isolates a single cognitive skill; BrainFry stresses
+compound reasoning with up to five interacting dimensions.}
+\label{tab:config-summary}
+\end{table}
+
+The tiering is deliberate rather than empirical: Easy configs give a clean
+per-dimension readout where metadata agents \emph{should} excel and vision
+agents are stress-tested on a single axis of perception. Medium introduces
+the first 2-D products and the first memory-combined configs. Hard
+introduces the Stroop (color:text) and tower-of-Hanoi (shape:hanoi)
+sub-modes that are designed to break VLMs, as well as 3-D products.
+BrainFry is the regime in which \emph{every} frontier model should be
+measurably imperfect: classic 4-D (number+color+shape+word at their easiest
+sub-modes), the same 4-D with every-action memory hiding, and 5-D
+all-hard.
 
 \subsection{Metrics}
-\plan{%
-  \begin{itemize}
-    \item \textbf{Primary}: max mana (peak total mana during the episode).
-      Single scalar, matches the human scoring system.
-    \item \textbf{Secondary}: surplus (max mana $-$ starting mana), total
-      reward, steps used, game-over rate.
-    \item \textbf{Diagnostic}: merge tier distribution (how many PERFECT,
-      GREAT, GOOD, BAD merges), sell timing (merges done when sold),
-      wasted draws, preview adherence rate, mana trajectory over time.
-    \item Report mean $\pm$ std over $N$ episodes per config.
-  \end{itemize}
-}
+\label{sec:metrics}
+
+Our primary metric is the \emph{max mana} achieved during an episode: the
+single scalar shown on the human leaderboard and the quantity whose
+multiplicative growth the merge mechanics are designed around. Because mana
+compounds multiplicatively, we report its distribution on a log scale.
+
+We additionally track: the \emph{mana surplus}
+(\,$\max\_\text{mana} - \text{starting\_mana}$\,, which equals zero for an
+agent that only drains and never merges productively); the distribution of
+per-merge gain tiers (what fraction of merges were \textsc{perfect},
+\textsc{great}, \textsc{ok}, \textsc{neutral}, \textsc{bad}); the mean
+number of merges completed on cards that were eventually sold
+(\emph{sell timing}, a proxy for planning depth); the number of wasted
+draws (draws that ended without a profitable merge); and, when merge
+previews are visible, the \emph{preview adherence rate} --- how often the
+agent picks the merge the greedy baseline would have picked.
+
+To aggregate across configs with very different mana scales, we map each
+episode's max mana through a logistic percentile calibrated against a
+human reference distribution (Appendix~\ref{app:percentile}), yielding a
+$0$--$100$ score that is comparable across tiers and configs and stackable
+into radar charts.
+
+\subsection{Ablation Knobs}
+\label{sec:ablations}
+
+Several aspects of the environment that are fixed in human play are
+independently toggleable in the benchmark. We use these to disentangle
+\emph{what} a model struggles with from \emph{that} it struggles:
+
+\begin{itemize}
+  \item \textbf{Merge preview}: when enabled, every observation includes,
+    for each legal merge, the exact tier-$g_d$ that each active dimension
+    would produce. This exposes whether an agent's bottleneck is
+    \emph{evaluating} candidate merges or \emph{planning} among evaluated
+    merges.
+  \item \textbf{Perfect memory}: when active, cards are never hidden even
+    under memory sub-modes. Toggling against the default memory hiding
+    isolates short-term memory capacity from strategy.
+  \item \textbf{Motor skill} (Fitts-law noise $\sigma$): sets the
+    variability of the drag endpoint used to evaluate motor-dimension
+    merges. A benchmark-wide default ensures fairness; per-agent overrides
+    are logged into the episode trace.
+  \item \textbf{History mode}: \textsc{stateless} vs.\ \textsc{compact} vs.\
+    \textsc{conversational}, per Section~\ref{sec:obs}.
+\end{itemize}
+
+Any subset of these may be frozen to isolate a single causal axis; e.g.\
+the vision-tax experiment freezes merge preview \emph{off} and history mode
+to \textsc{compact}, varying only the observation channel.
+
+\subsection{Fairness Invariants}
+\label{sec:fairness}
+
+Three invariants are maintained across all agents and configs. First, game
+time is frozen between actions, so latency cannot influence score; the
+Motor and Beat dimensions re-introduce time sensitivity \emph{only} when
+explicitly enabled. Second, memory hiding is \emph{turn-based}, not
+wall-clock-based: a hidden card becomes visible for exactly one agent step
+after being touched, then re-hides, regardless of how long the model
+deliberated. Third, card generation is deterministically seeded so that
+every $(\text{config}, \text{seed})$ pair produces the same card stream
+and identical merge outcomes; this lets us compare agents on matched
+episodes rather than matched distributions.
 
 
 % ======================================================================
 \section{Agents}
 \label{sec:agents}
 
+We evaluate four agent families. \textsc{Random} and \textsc{Greedy} are
+programmatic baselines that bracket the range of scores achievable
+\emph{without} strategic reasoning: Random establishes the floor, and
+Greedy establishes the ceiling reachable from perfect local information
+with no planning. \textsc{LLM} and \textsc{VLM} are model agents that
+consume the metadata and vision observation channels respectively and
+return actions through the same Gymnasium interface. All four use the
+shared \texttt{BaseAgent} protocol, so an experiment sweep is a single
+$(\text{agent}, \text{config}, \text{seed})$ cross-product.
+
 \subsection{Random Agent (Floor)}
-\plan{%
-  Uniformly samples from valid actions. Establishes the score floor.
-  Expected score $\approx$ starting mana (200) since random merges are
-  equally likely to help or hurt, while draws steadily drain mana.
-}
+\label{sec:random-agent}
+
+The random agent samples uniformly from the valid actions indicated by the
+observation's action mask. It issues no draws unless drawing is the only
+legal action, merges and sells at the same rate, and never considers
+merge quality. Over a typical episode its per-merge gain tier distribution
+is centred on $g_d = 0$, so merges neither grow nor shrink mana in
+expectation; draws, by contrast, deterministically cost 10 mana each.
+Without a preferred direction the trajectory drifts down, and the expected
+max mana stays within noise of the starting mana (200). The random agent
+therefore serves two purposes: it is the score floor against which to
+measure progress, and it is the sanity check that the environment is
+actually producing useful learning signal --- an agent that cannot beat
+random is not reasoning about the game.
 
 \subsection{Greedy Agent (Calibrated Baseline)}
-\plan{%
-  \begin{itemize}
-    \item Uses the bridge's pre-computed merge previews to pick the merge
-      with the highest minimum gain across active dimensions.
-    \item Decision priority: sell maxed cards $\to$ merge if min-gain
-      $\geq$ threshold $\to$ place into empty slot $\to$ sell new card.
-    \item No lookahead beyond one step. No inter-slot merges.
-    \item Represents the performance ceiling of ``perfect local information,
-      no planning.''
-  \end{itemize}
-}
+\label{sec:greedy-agent}
+
+The greedy agent reads the merge-preview table that the WebSocket bridge
+ships with every observation, which contains, for each legal merge, the
+per-dimension gain tier $g_d$ computed by the same C\# code that scores
+the real game. At each step it follows a fixed checklist that mirrors the
+decision order exposed in the LLM system prompt:
+\begin{enumerate}
+  \item If any build slot has hit its merge cap, sell that slot.
+  \item If the new slot is occupied, score every legal
+    new $\to$ slot$_n$ preview. If the best candidate is at least
+    \emph{ok} ($g_d \geq 1$) on \emph{every} active dimension, execute
+    that merge.
+  \item Otherwise, if there is an empty build slot, place the new card
+    there. Otherwise, sell the new card rather than corrupt a built slot.
+  \item If the new slot is empty, draw.
+\end{enumerate}
+The scoring rule is the highest \emph{minimum} per-dimension tier rather
+than sum or mean, because the merge outcome compounds multiplicatively
+(Equation~\ref{eq:merge}): a single weak dimension dominates the loss.
+Greedy does no lookahead beyond one step and does not consider inter-slot
+merges (slot$_a \to$ slot$_b$), even though the bridge ships those previews
+too; this keeps it an \emph{information} baseline rather than a
+\emph{planning} baseline. The gap between Greedy and an LLM at the same
+config therefore measures the value of planning given already-perfect
+local information, while the gap between Greedy and Random measures the
+value of local information given no planning.
 
 \subsection{LLM Agent (Metadata Mode)}
-\plan{%
-  \begin{itemize}
-    \item Receives structured text description of game state + valid actions.
-    \item System prompt explains game rules, merge mechanics, scoring.
-    \item Outputs a single action integer per turn.
-    \item Tested with: \todo{list models --- Claude, GPT-4, open-source
-      models at various scales.}
-    \item Compact history trail provides last $N$ steps as context.
-  \end{itemize}
-}
+\label{sec:llm-agent}
+
+The LLM agent consumes the metadata observation and returns a single
+integer action per step. The prompt is a fixed three-part template: a
+system message that states the game rules, the merge-gain tiers, and the
+decision checklist from Section~\ref{sec:greedy-agent}; a game-state block
+that renders the current observation as structured text (active
+dimensions and sub-modes, per-slot card attributes, mana, step counter,
+legal-action list); and, in history-enabled modes, a trail of prior
+$(\text{action}, \text{outcome})$ rows. The agent's output is constrained
+to the legal-action list, so malformed or off-manifest responses become
+no-ops that the environment drops without advancing game state.
+
+All three history modes from Section~\ref{sec:obs} are supported.
+\textsc{Stateless} issues one independent API call per step, which costs
+the most tokens per decision but eliminates context drift.
+\textsc{Conversational} accumulates a rolling user--assistant transcript
+within an episode, letting the model reference earlier reasoning but
+paying quadratic cost in history length. \textsc{Compact} appends one
+fixed-width line per completed step --- a terminal-style transcript of
+slot states and merge tiers --- which lets us give a $100$-step horizon to
+models whose context or price budget would not tolerate the equivalent
+conversation. The merge-preview field is an independent toggle: when
+enabled, the per-dimension tier table appears alongside the slot dump and
+the model only has to plan, not evaluate.
+
+We evaluate a range of commercial and open-weight models spanning
+parameter scale and release family. \todo{Confirm final model list from
+the UI-visible run manifest before publication.}
 
 \subsection{VLM Agent (Vision Mode)}
-\plan{%
-  \begin{itemize}
-    \item Receives screenshot + minimal text (mana, step count, valid
-      actions).
-    \item Must extract card attributes (numbers, colors, shapes, words)
-      from the rendered image.
-    \item Same strategic reasoning required as metadata mode, plus visual
-      grounding.
-    \item \todo{Tested with: Claude vision, GPT-4V, open-source VLMs.}
-  \end{itemize}
-}
+\label{sec:vlm-agent}
+
+The VLM agent consumes the vision observation --- a $960{\times}540$ PNG
+screenshot of the live canvas --- alongside a minimal HUD (current mana,
+step counter, legal actions). Card attributes are \emph{not} enumerated in
+text: the model must read number, colour, shape, and word off the pixels.
+The system prompt, decision checklist, and action-encoding rules are
+identical to the metadata agent, so the only source of score differences
+between a model's metadata run and its vision run is visual grounding,
+not strategy. All three history modes are supported; in
+\textsc{compact}~+~vision mode, trail entries still list actions and
+mana, but slot attributes are blanked so the screenshot remains the sole
+source of perceptual information.
+
+Running the same config with the same model in both channels yields a
+\emph{vision tax}: the multiplicative score ratio between metadata and
+vision, or equivalently the additive drop in the logistic percentile
+(Section~\ref{sec:metrics}). We report it per-dimension by restricting to
+Easy configs whose sole active dimension is perceptual (colour, shape).
+\todo{Confirm final VLM list once the UI-visible run manifest is
+finalised; the current Kimi-K2.5 runs abandoned before episode end and
+must be rerun.}
+
+\subsection{Human Baseline}
+\label{sec:human-agent}
+
+For reference we include a small number of human sessions collected
+through the benchmark UI's recorder, bound to the same Gymnasium
+interface and scoring as the model agents. These are used only to
+calibrate the logistic percentile (Appendix~\ref{app:percentile}) and to
+anchor the Easy-tier comparison; no human experiments are involved in
+the quantitative claims of Section~\ref{sec:experiments}.
 
 
 % ======================================================================
@@ -558,6 +870,316 @@ and native screenshot capture.
   \end{itemize}
   \todo{Figure: radar chart comparing agents across dimensions.}
 }
+
+
+% ======================================================================
+\section{Multi-Agent Yedi: Adversarial and Cooperative Play}
+\label{sec:multi-agent}
+
+The single-agent benchmark of Sections~\ref{sec:benchmark}--\ref{sec:experiments}
+measures an agent's ability to reason under multi-dimensional trade-offs in
+isolation. We now describe a natural extension --- \emph{Multi-Agent Yedi}
+--- in which two (or more) agents share a board, alternate actions, and each
+accumulate their own private score. The design is already supported by the
+WebSocket bridge; what changes is the scoring model in the Unity-side
+C\# implementation, the per-agent prompt construction, and the research
+questions the benchmark can now answer. We present the design in full
+because it is, to our knowledge, the first \emph{mixed-motive strategic
+reasoning} benchmark for frontier LLMs: previous multi-agent benchmarks
+for language models are either fully cooperative
+(Hanabi~\citep{bard2020hanabi}) or fully adversarial (poker and game-theory
+suites~\citep{brown2019pluribus, duan2024gtbench, zhuang2025pokerbench,
+chen2024aucarena}), while Diplomacy-style work~\citep{meta2022cicero,
+mukobi2024welfare} embeds negotiation in a game whose board state is too
+large to be used as a clean reasoning probe.
+
+\subsection{Motivation}
+\label{sec:ma-motivation}
+
+The mixed-motive regime --- where agents must \emph{simultaneously}
+cooperate to grow a shared pie and compete to claim slices of it --- is
+the empty corner of the LLM-game-benchmark landscape. Melting
+Pot~\citep{leibo2021meltingpot} established the importance of this regime
+for reinforcement-learning agents, demonstrating that purely cooperative
+or purely adversarial benchmarks do not predict behaviour in real-world
+multi-party settings. Recent work on LLMs in repeated social
+dilemmas~\citep{akata2023playing, lore2023strategic} finds that even
+frontier models exhibit brittle strategic reasoning: they cooperate in
+semantic framings that evoke cooperative scripts and defect in framings
+that evoke competitive scripts, even when the underlying payoff matrix is
+identical. What is missing is a benchmark that (i) presents a novel
+game whose payoff structure is not already encoded in training data,
+(ii) produces continuous-valued outcomes rather than a binary
+cooperate/defect, and (iii) varies the cooperation--competition balance
+along a continuous configuration axis. Multi-Agent Yedi meets all three:
+its multiplicative scoring makes every merge either pie-growing or
+pie-taking; its 40+ configurations parametrise how much of the joint
+surplus can be privately captured; and its mechanics are sufficiently
+idiosyncratic that no model has seen training transcripts of expert play.
+
+\subsection{Game Rules for Two-Agent Yedi}
+\label{sec:ma-rules}
+
+Agents $A$ and $B$ alternate turns on a single shared board. Each turn the
+active agent takes exactly one action from the same 37-action space as
+the single-player game (Section~\ref{sec:env}) with the same action mask.
+The shared state comprises one new slot, five build slots, one sell slot,
+one board-level mana pool, and one shared card deck seeded deterministically
+as in the single-player benchmark.
+
+\paragraph{Mana accounting.} A single board-level mana variable
+$M_\text{board}$ replaces the single-player mana. In addition, each agent
+has a private score variable $M_A, M_B$. On a merge executed by agent
+$X \in \{A, B\}$, let $\Delta = M_\text{board}' - M_\text{board}$ be the
+net change in board mana driven by the merge (positive for productive
+merges, negative for failed merges). Then:
+\begin{equation}
+\label{eq:ma-score}
+M_X \mathrel{+}= \Delta, \qquad M_\text{board} \mathrel{+}= \Delta.
+\end{equation}
+The active agent is credited with the full delta of the move they made.
+Draws cost $10$ mana, debited from $M_\text{board}$ only; the agent who
+drew pays nothing from their private score. Sells refund the card's
+current mana to $M_\text{board}$ only, leaving private scores unchanged.
+Termination occurs when $M_\text{board}$ would go below zero on a draw
+(identical to the single-agent rule); the episode's final scores are
+$(M_A^{\text{peak}}, M_B^{\text{peak}})$ at the moment $M_\text{board}$
+peaked.
+
+\paragraph{Why this specific attribution.} The active-agent-captures-delta
+rule is the minimal change that (i) preserves the meaning of the primary
+metric (max mana $\to$ peak private mana) and (ii) creates a non-trivial
+mixed-motive game. If instead both agents received the full delta, the
+game reduces to fully cooperative play with turn-taking, and there is no
+incentive to deny. If only the executing agent received the delta and
+$M_\text{board}$ did not track it, there would be no shared resource and
+the game reduces to two parallel single-agent games with interference
+only through slot occupancy. Equation~\ref{eq:ma-score} is the unique
+choice in which every merge simultaneously feeds the shared pool
+\emph{and} the private score, so each action forces a choice between
+``build now so I can harvest later'' and ``harvest now before they
+do.''
+
+\paragraph{The last-merge phenomenon.} Because mana compounds
+multiplicatively (Equation~\ref{eq:merge}), the \emph{final} merge on a
+slot --- the one that closes it at its merge cap of 3--5 --- carries
+enormously more mana delta than any earlier merge on that slot. A slot
+that has been built up to mana $m$ with one merge remaining yields
+$m \cdot (\mu^* - 1)$ to whoever lands the final merge, where
+$\mu^*$ is the compound multiplier for that final move. The agent who
+\emph{built} the slot invested in capital that the agent who
+\emph{closes} the slot harvests. This asymmetry is the engine of the
+game's strategic richness: it simultaneously creates an incentive to
+build (the board pool grows), an incentive to race (final merges are
+disproportionately valuable), and an incentive to deny (selling a
+built-up slot on your turn aborts the opponent's upcoming harvest).
+
+\subsection{Strategic Primitives}
+\label{sec:ma-primitives}
+
+The two-agent game admits a taxonomy of move types that does not exist in
+the single-player game. We enumerate them to give the reader a concrete
+sense of what ``good play'' means in this regime.
+
+\begin{itemize}
+  \item \textbf{Selfish merge}: the active agent executes a merge
+    with high expected $\Delta$ on a slot they can close themselves in
+    a future turn. Zero-sum vis-\`a-vis the opponent; the safest
+    move.
+  \item \textbf{Setup / gift merge}: the active agent places a card in a
+    build slot or executes a low-$\Delta$ merge that raises a slot's
+    mana. Positive for $M_\text{board}$, but sets up a harvest whose
+    harvester is undetermined. Rational only if the agent expects to
+    recapture the harvest, or if the opponent is trusted not to.
+  \item \textbf{Denial sell}: the active agent sells a slot the opponent
+    is plausibly about to close at high $\Delta$. Refunds a small
+    amount of mana to $M_\text{board}$ (no private-score change) at the
+    cost of losing the slot entirely. Defects against any implicit
+    cooperation.
+  \item \textbf{Handoff merge}: a merge whose merger was made possible
+    only by the opponent's prior setup. Equivalent in mechanics to a
+    selfish merge, but socially coded as ``taking.'' Repeated handoffs
+    without reciprocation are the multi-agent Yedi analogue of
+    prisoner's-dilemma defection.
+  \item \textbf{Draw refusal}: skipping the draw (e.g.\ by merging or
+    selling when the new slot is empty) to force the opponent to pay
+    the $10$-mana draw cost. Small magnitude but measurable over an
+    episode.
+  \item \textbf{Reciprocal alternation}: a stable cooperation policy in
+    which each agent builds on odd turns and harvests on even (or
+    vice versa), matching the turn cadence so that the partition of
+    harvests is approximately equal. We expect frontier LLMs to reach
+    this pattern in communication-enabled symmetric games and to
+    \emph{fail} to reach it in no-communication games.
+\end{itemize}
+
+\subsection{Configuration Dimensions}
+\label{sec:ma-configs}
+
+Multi-Agent Yedi adds four orthogonal configuration axes to the
+single-player surface:
+
+\begin{enumerate}
+  \item \textbf{Symmetry}: whether the two agents share the same active
+    dimensions and sub-modes (symmetric) or see different active
+    dimensions (asymmetric, e.g.\ $A$ plays \texttt{number:add} while
+    $B$ plays \texttt{color:add} on the same cards). Asymmetric configs
+    test whether a model can reason about an opponent whose scoring
+    rule it does not share.
+  \item \textbf{Communication channel}: no channel (pure observation-only
+    equilibrium); a single-turn natural-language message slot (one
+    message from each agent, before any action); or a free-form
+    chat channel interleaved with actions. This is the bandwidth
+    parameter of Welfare Diplomacy~\citep{mukobi2024welfare} applied to
+    a game with a mechanical score.
+  \item \textbf{Turn order}: fixed-alternation ($A, B, A, B, \ldots$);
+    random-order (a fair coin flip each turn); or bid-for-priority
+    (each agent privately submits a mana bid; winner acts, pays bid to
+    the pool). Bid-for-priority is a stress test for models that must
+    reason about their opponent's willingness to pay.
+  \item \textbf{Opponent visibility}: whether each agent can see the
+    opponent's cumulative private score during play, only at episode
+    end, or never. Hidden-score variants probe whether models can
+    infer an opponent's standing from action patterns alone.
+\end{enumerate}
+
+The Cartesian product of these axes with the single-player 36
+configurations yields several thousand distinct multi-agent benchmarks.
+We propose a curated initial suite (Appendix~\ref{app:ma-configs})
+focused on symmetric same-dimension games across the four tiers, plus
+three asymmetric probes at Medium, and a Welfare-Diplomacy-style
+cooperation ladder (no-comm $\to$ one-shot comm $\to$ free chat) on a
+single Easy config as the primary cooperation-capacity benchmark.
+
+\subsection{Metrics}
+\label{sec:ma-metrics}
+
+Every single-agent metric (Section~\ref{sec:metrics}) retains its meaning
+when computed per-agent. We add four multi-agent-specific scalars:
+
+\begin{itemize}
+  \item \textbf{Joint welfare} $W = M_A^{\text{peak}} + M_B^{\text{peak}}$:
+    how much total private score was generated. Cooperation grows $W$;
+    denial shrinks it. Directly comparable across symmetric configs.
+  \item \textbf{Inequality} $I = |M_A^{\text{peak}} - M_B^{\text{peak}}|
+    / W$: how asymmetrically the private scores were partitioned. An
+    $I$ of $0$ is perfect parity; $I$ of $1$ is winner-take-all. Used to
+    distinguish purely-cooperative outcomes ($W$ large, $I$ small) from
+    cooperate-then-betray ($W$ large, $I$ large).
+  \item \textbf{Gift ratio}: the fraction of the mana an agent added to
+    $M_\text{board}$ via setup merges that was subsequently captured by
+    the opponent rather than the setter. High gift ratio with high $W$
+    indicates stable turn-taking; high gift ratio with low $W$
+    indicates exploited cooperation.
+  \item \textbf{Denial rate}: the fraction of the opponent's built-up
+    slots that were sold by the active agent before the opponent could
+    close them. Primary signal of defection.
+\end{itemize}
+
+In addition, when the communication channel is enabled, we log every
+utterance and score (a) \textbf{promise fulfilment rate}: of moves
+committed to in chat, the fraction the agent actually executed, and
+(b) \textbf{opponent-model predictive accuracy}: a held-out agent
+(``oracle'') reads the chat transcript and predicts the opponent's next
+action; accuracy measures how much information the chat conveys.
+
+\subsection{Research Questions}
+\label{sec:ma-rqs}
+
+Multi-Agent Yedi enables a distinct class of research questions
+unreachable with the single-player benchmark:
+
+\begin{itemize}
+  \item \textbf{MA-RQ1 (Zero-shot cooperation).} Do frontier LLMs reach
+    the reciprocal-alternation equilibrium on a symmetric game with no
+    communication channel? The hypothesis, motivated by
+    \citet{akata2023playing}, is \emph{no}: agents default to selfish
+    merging and only cooperate when the prompt semantically frames the
+    game as cooperative. Multi-Agent Yedi tests this without a framing
+    confound because the game is novel.
+  \item \textbf{MA-RQ2 (Communication value).} How much of the
+    single-agent $\to$ symmetric-joint welfare gap is closed by
+    enabling a one-shot natural-language message? How much more by
+    free chat? We expect diminishing returns for frontier models and
+    inverted returns for weaker models (more chat = more hallucinated
+    commitments).
+  \item \textbf{MA-RQ3 (Sabotage detection).} When $A$'s policy is
+    scripted to defect (e.g.\ always deny-sell), does $B$ detect this
+    within an episode and switch from cooperate to retaliate? Measured
+    by the trajectory of $B$'s gift ratio over the episode.
+  \item \textbf{MA-RQ4 (Asymmetric-capability carry).} When a strong
+    model plays a weak model, does the strong model adapt to carry the
+    weak partner (maximising joint welfare) or exploit it (maximising
+    own score)? We expect frontier models to carry on cooperative-
+    framed prompts and exploit on neutral prompts.
+  \item \textbf{MA-RQ5 (Compositional scoring rules).} On asymmetric
+    configs where $A$ scores \texttt{number} and $B$ scores
+    \texttt{color}, does either agent learn the opponent's scoring
+    rule by observing the opponent's preferences across merges? This
+    is a clean test of inverse reinforcement learning in context.
+\end{itemize}
+
+\subsection{Technical Implementation Plan}
+\label{sec:ma-impl}
+
+The existing WebSocket bridge already serialises and deserialises full
+game state per step. Four changes are required:
+
+\begin{enumerate}
+  \item \emph{C\# scorer split}: \texttt{ScoreManager} currently writes
+    every merge delta into the single \texttt{currentMana} field. We
+    add a \texttt{currentActingAgent} field set by the bridge before each
+    step, and a dictionary of per-agent peak scores updated in the same
+    place the current peak is updated.
+  \item \emph{Bridge protocol}: the \texttt{action} command grows an
+    \texttt{agent\_id} field; the \texttt{observation} payload grows
+    per-agent score fields and the \texttt{current\_acting\_agent}
+    field. Everything else (action space, mask, observation schema) is
+    unchanged.
+  \item \emph{Python orchestrator}: a new \texttt{MultiAgentEnv} wraps
+    the existing \texttt{YediEnv} and exposes a \texttt{step(agent\_id,
+    action)} interface. A turn-order policy (fixed / random / bid)
+    decides which agent's \texttt{step} call is accepted next; others
+    return a no-op.
+  \item \emph{Prompt plumbing}: the LLM agent's system prompt gains an
+    \textsc{opponent} block describing the opponent's active dimensions
+    (for asymmetric configs) and the current chat transcript (when
+    enabled). Each agent's prompt is independently assembled.
+\end{enumerate}
+
+We estimate the end-to-end implementation at 1--2 weeks of engineering,
+primarily in the C\# scorer split and the Python orchestrator; the
+prompt plumbing is a thin extension of the existing LLM agent code.
+
+\subsection{Scaling Beyond Two Agents}
+\label{sec:ma-nagents}
+
+The attribution rule in Equation~\ref{eq:ma-score} generalises to $n$
+agents with no modification: the active agent captures the full delta on
+each action; all other agents observe. Three $\geq 3$-agent game modes
+become interesting:
+
+\begin{itemize}
+  \item \textbf{Round-robin} ($n$ agents, fixed turn order): the
+    natural generalisation. Reciprocal-alternation patterns become
+    harder to sustain as $n$ grows because each agent has a smaller
+    share of the turn clock.
+  \item \textbf{Coalition formation}: a pre-action phase allows
+    subsets of agents to publicly announce a merger of their private
+    scores. Post-merge, $M_C = \sum_{i \in C} M_i$ is treated as a
+    single score; the coalition plays as a meta-agent with an internal
+    protocol for which agent acts on which turn. Tests whether LLMs
+    can commit to coalitions and defect stably.
+  \item \textbf{Tournament play}: $n$ agents play a series of two-agent
+    matches in a round-robin, with leaderboard ranking by total joint
+    welfare earned across all matches. The LLM arena
+    paradigm~\citep{chen2024llmarena} meets continuous scoring.
+\end{itemize}
+
+We leave empirical investigation of the $n > 2$ regimes to future work
+but note that the $n = 2$ case already admits several thousand
+benchmark configurations and produces the strongest signal per episode,
+justifying it as the primary multi-agent Yedi modality.
 
 
 % ======================================================================

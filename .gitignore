@@ -71,3 +71,13 @@ __pycache__/
 scores.json
 logs/
 yedi_benchmark/data/
+
+# LaTeX build artefacts (keep .tex, .bib, .pdf tracked)
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.synctex.gz
+paper/audit/
